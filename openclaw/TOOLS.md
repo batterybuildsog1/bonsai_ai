@@ -106,6 +106,83 @@ python3 -m bonsai_ai.design_pipeline_cli \
 | Anthropic | claude-opus-4-6 | good for complex plans |
 | Gemini | gemini-2.5-flash-lite | fastest for simple iterations |
 
+## Execution Scripts
+
+### `scripts/execute_plan.py` -- Execute a BIM plan
+
+Takes a JSON plan (via stdin or `--plan-file`), compiles it, executes via IfcAuthor, and outputs structured JSON.
+
+**Input:** BIM plan JSON with `version`, `units`, `summary`, `assumptions`, `actions`.
+
+**Output (JSON to stdout):**
+```json
+{
+  "success": true,
+  "output_path": "/absolute/path/to/model.ifc",
+  "actions_executed": 47,
+  "errors": [],
+  "scene_summary": "Project: AI Project\nStoreys: ...",
+  "element_counts": {"walls": 12, "slabs": 5, "columns": 20, ...},
+  "created": ["Ground Floor", "Level 1", "GF-Grid-Col-A1", ...]
+}
+```
+
+**Flags:**
+- `--output <path>` (required): IFC output file path
+- `--plan-file <path>`: read plan from file instead of stdin
+- `--append`: add to existing IFC instead of overwriting
+- `--skip-compile`: plan is already in compiled/primitive form
+
+**Usage:**
+```bash
+cd /Users/alanknudson/Applications/Bonsai_ai && \
+PYTHONPATH=src:. python3 scripts/execute_plan.py \
+  --output out/project/model.ifc <<'PLAN'
+{"version":"1","units":"meters","summary":"...","assumptions":[],"actions":[...]}
+PLAN
+```
+
+### `scripts/query_scene.py` -- Inspect model state
+
+Non-destructive model inspector. Returns structured information about an existing IFC file.
+
+**Output (JSON to stdout):**
+```json
+{
+  "success": true,
+  "model_path": "/absolute/path/to/model.ifc",
+  "element_counts": {"walls": 12, "slabs": 5, ...},
+  "storeys": [
+    {"name": "Ground Floor", "elevation": 0.0, "element_count": 15}
+  ],
+  "scene_summary": "Project: AI Project\nStoreys: ...",
+  "validation": {
+    "orphan_elements": 0,
+    "elements_without_storey": []
+  }
+}
+```
+
+**Usage:**
+```bash
+cd /Users/alanknudson/Applications/Bonsai_ai && \
+PYTHONPATH=src:. python3 scripts/query_scene.py out/project/model.ifc
+```
+
+## Iterative Builder (CLI)
+
+Session-based iterative planner that maintains conversation context across all phases:
+
+```bash
+cd /Users/alanknudson/Applications/Bonsai_ai && \
+PYTHONPATH=src python3 -m bonsai_ai.cli \
+  --iterative \
+  --output out/project/model.ifc \
+  --prompt "Design a 2-story office building..."
+```
+
+The `--iterative` flag uses a single OpenClaw session for all phases, so the agent remembers storey names, grid origins, and prior decisions. This produces better spatial consistency than the default phased planner.
+
 ## Local Runtime Notes
 
 - All dimensions in meters

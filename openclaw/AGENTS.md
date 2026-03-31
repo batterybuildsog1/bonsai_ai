@@ -208,6 +208,72 @@ You wake up fresh each session. These files are your continuity:
 - Write significant operator learnings, prompt patterns that work, provider quirks
 - Over time, review daily files and project logs and distill what's worth keeping
 
+## Direct Execution
+
+You can build IFC models directly using the execution scripts via bash.
+
+### Generating a plan
+
+Generate a BIM plan as a JSON object following the standard format. Use your knowledge of the primitives, build order, and project context. The plan must have `version`, `units`, `summary`, `assumptions`, and `actions` keys.
+
+### Executing a plan
+
+```bash
+cd /Users/alanknudson/Applications/Bonsai_ai && \
+PYTHONPATH=src:. python3 scripts/execute_plan.py \
+  --output out/<project>/model.ifc <<'PLAN'
+<your JSON plan here>
+PLAN
+```
+
+Or from a file:
+```bash
+cd /Users/alanknudson/Applications/Bonsai_ai && \
+PYTHONPATH=src:. python3 scripts/execute_plan.py \
+  --plan-file plan.json --output out/<project>/model.ifc
+```
+
+### Incremental building (append to existing model)
+
+```bash
+cd /Users/alanknudson/Applications/Bonsai_ai && \
+PYTHONPATH=src:. python3 scripts/execute_plan.py \
+  --output out/<project>/model.ifc --append <<'PLAN'
+<your JSON plan here>
+PLAN
+```
+
+### Querying model state (non-destructive)
+
+```bash
+cd /Users/alanknudson/Applications/Bonsai_ai && \
+PYTHONPATH=src:. python3 scripts/query_scene.py out/<project>/model.ifc
+```
+
+Returns JSON with: element_counts, storeys (with elevations and element counts), scene_summary, validation (orphan elements).
+
+### Reading the result
+
+Both scripts output JSON to stdout. For execute_plan.py:
+- `success`: true/false
+- `actions_executed`: number of IFC elements created
+- `errors`: list of error messages
+- `scene_summary`: text summary of the model state
+- `element_counts`: dict of IFC class counts (walls, slabs, columns, etc.)
+
+Use this to verify each phase and iterate. If errors occur, read the error messages, correct the plan, and re-execute.
+
+### Iterative build workflow
+
+1. Start with storeys: `ensure_storey` actions for each level
+2. Execute and verify: check that storeys appear in scene_summary
+3. Structure phase: column grids and floor plates (use `--append`)
+4. Envelope phase: perimeter walls (use `--append`)
+5. Openings phase: doors and windows hosted in existing walls (use `--append`)
+6. After each phase, run `query_scene.py` to verify the model state
+
+Maximum 6 phases per build. If a phase fails twice, skip it and note the issue.
+
 ## Red Lines
 
 - Don't overwrite IFC files without confirming with the human

@@ -8,6 +8,7 @@ from .ifc_author import AuthoringError, IfcAuthor
 from .planner import DEFAULT_MODELS, DEFAULT_ENV_VARS, PlannerError, PlannedToolCall, create_plan
 from .openclaw_planner import create_plan_via_openclaw
 from .phased_planner import create_phased_plan_via_openclaw
+from .iterative_planner import create_iterative_plan_via_openclaw
 
 
 # ---------------------------------------------------------------------------
@@ -96,6 +97,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Use single-shot planner instead of phased plan-then-execute (only with --via-openclaw).",
     )
+    parser.add_argument(
+        "--iterative",
+        action="store_true",
+        help="Use iterative session-based planner (maintains conversation context across phases).",
+    )
     return parser
 
 
@@ -104,6 +110,29 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     use_openclaw = getattr(args, "via_openclaw", False)
     use_single_phase = getattr(args, "single_phase", False)
+    use_iterative = getattr(args, "iterative", False)
+
+    # -----------------------------------------------------------------------
+    # Iterative planner path — maintains session context across phases.
+    # Activated with --iterative (implies --via-openclaw).
+    # -----------------------------------------------------------------------
+    if use_iterative:
+        try:
+            summary = create_iterative_plan_via_openclaw(
+                user_prompt=args.prompt,
+                output_path=args.output,
+                dry_run=args.dry_run,
+            )
+        except PlannerError as exc:
+            print(f"[iterative] Iterative planner failed: {exc}")
+            if use_openclaw or getattr(args, "provider", None):
+                print("[iterative] Falling back to phased planner...")
+            else:
+                raise
+        else:
+            if args.dry_run:
+                print(json.dumps(summary, indent=2))
+            return 0
 
     # -----------------------------------------------------------------------
     # Phased planner path — default when --via-openclaw is set.
