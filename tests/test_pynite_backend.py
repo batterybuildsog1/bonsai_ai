@@ -208,5 +208,93 @@ class PyNiteBackendTests(unittest.TestCase):
         self.assertEqual(payload["summary"]["member_demands"]["column_a"]["length_m"], 3.0)
 
 
+class FastSolverTests(unittest.TestCase):
+    """Tests for the factor-once-solve-many Cholesky solver."""
+
+    def _build_portal_frame(self):
+        """Build a simple portal frame with 2 load cases and 3 combos using real PyNite."""
+        try:
+            pynite = load_pynite_module()
+        except RuntimeError:
+            self.skipTest("PyNite not installed")
+        m = pynite.FEModel3D()
+        m.add_material("steel", 200e9, 200e9 / (2 * (1 + 0.3)), 0.3, 7850)
+        m.add_section("s1", 0.01, 1e-5, 1e-5, 2e-5)
+        m.add_node("N1", 0, 0, 0)
+        m.add_node("N2", 0, 0, 3)
+        m.add_node("N3", 6, 0, 3)
+        m.add_node("N4", 6, 0, 0)
+        m.add_member("C1", "N1", "N2", "steel", "s1")
+        m.add_member("B1", "N2", "N3", "steel", "s1")
+        m.add_member("C2", "N3", "N4", "steel", "s1")
+        m.def_support("N1", support_DX=True, support_DY=True, support_DZ=True,
+                       support_RX=True, support_RY=True, support_RZ=True)
+        m.def_support("N4", support_DX=True, support_DY=True, support_DZ=True,
+                       support_RX=True, support_RY=True, support_RZ=True)
+        m.add_member_dist_load("B1", "FZ", -10000, -10000, case="DL")
+        m.add_node_load("N2", "FX", 5000, case="WL")
+        m.add_load_combo("1.2DL+1.0WL", {"DL": 1.2, "WL": 1.0})
+        m.add_load_combo("1.4DL", {"DL": 1.4})
+        m.add_load_combo("0.9DL+1.0WL", {"DL": 0.9, "WL": 1.0})
+        return m
+
+    def test_fast_solver_matches_pynite(self) -> None:
+        """Verify factor-once solver produces identical results to PyNite's spsolve."""
+        m_pynite = self._build_portal_frame()
+        m_pynite.analyze_linear(log=False)
+
+        m_fast = self._build_portal_frame()
+        PyNiteSolverBackend._run_solver_fast(m_fast)
+
+        combos = ["1.2DL+1.0WL", "1.4DL", "0.9DL+1.0WL"]
+        nodes = ["N1", "N2", "N3", "N4"]
+        for combo in combos:
+            for nname in nodes:
+                np = m_pynite.nodes[nname]
+                nf = m_fast.nodes[nname]
+                for attr in ("DX", "DY", "DZ", "RX", "RY", "RZ"):
+                    vp = float(getattr(np, attr).get(combo, 0.0))
+                    vf = float(getattr(nf, attr).get(combo, 0.0))
+                    self.assertAlmostEqual(vp, vf, places=10,
+                                           msg=f"{combo}/{nname}/{attr}")
+            for nname in ("N1", "N4"):
+                np = m_pynite.nodes[nname]
+                nf = m_fast.nodes[nname]
+                for attr in ("RxnFX", "RxnFY", "RxnFZ", "RxnMX", "RxnMY", "RxnMZ"):
+                    vp = float(getattr(np, attr).get(combo, 0.0))
+                    vf = float(getattr(nf, attr).get(combo, 0.0))
+                    self.assertAlmostEqual(vp, vf, places=5,
+                                           msg=f"{combo}/{nname}/{attr}")
+
+    def test_fast_solver_sets_solution_flag(self) -> None:
+        m = self._build_portal_frame()
+        PyNiteSolverBackend._run_solver_fast(m)
+        self.assertEqual(m.solution, "Linear")
+
+    def test_env_flag_pynite_skips_fast_path(self) -> None:
+        """Setting BONSAI_FEA_SOLVER=pynite should use the original solver."""
+        m = self._build_portal_frame()
+        with mock.patch.dict("os.environ", {"BONSAI_FEA_SOLVER": "pynite"}):
+            PyNiteSolverBackend._run_solver(m)
+        self.assertEqual(m.solution, "Linear")
+
+    def test_env_flag_fast_uses_cholesky(self) -> None:
+        """Setting BONSAI_FEA_SOLVER=fast should use the Cholesky solver."""
+        m = self._build_portal_frame()
+        with mock.patch.dict("os.environ", {"BONSAI_FEA_SOLVER": "fast"}):
+            PyNiteSolverBackend._run_solver(m)
+        self.assertEqual(m.solution, "Linear")
+        # Verify some node has non-zero displacement
+        n2 = m.nodes["N2"]
+        self.assertNotEqual(n2.DZ.get("1.4DL", 0.0), 0.0)
+
+    def test_fast_solver_fallback_on_fake_model(self) -> None:
+        """The fast solver should gracefully fall back for non-PyNite models."""
+        fake_model = _FakeFEModel3D()
+        fake_model.load_combos = {"test": {"DL": 1.0}}
+        # This should not raise -- it should fall back to analyze_linear
+        PyNiteSolverBackend._run_solver(fake_model)
+
+
 if __name__ == "__main__":
     unittest.main()

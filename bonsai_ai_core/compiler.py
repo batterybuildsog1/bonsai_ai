@@ -80,6 +80,14 @@ def _compile_action(action: Dict[str, Any]) -> List[Dict[str, Any]]:
             },
         )
         return [_ensure_semantic_identity(compiled)]
+    if action_type == "generate_column_grid":
+        return _compile_column_grid(action)
+    if action_type == "generate_perimeter_walls":
+        return _compile_perimeter_walls(action)
+    if action_type == "generate_floor_plate":
+        return _compile_floor_plate(action)
+    if action_type == "generate_facade_grid":
+        return _compile_facade_grid(action)
     return [_ensure_semantic_identity(copy.deepcopy(action))]
 
 
@@ -127,6 +135,271 @@ def _compile_stair_run(action: Dict[str, Any]) -> List[Dict[str, Any]]:
         )
         treads.append(_ensure_semantic_identity(tread))
     return treads
+
+
+def _column_label(row: int, col: int) -> str:
+    """Generate grid labels like A1, A2, ..., B1, B2, ..., AA1, etc."""
+    letters = ""
+    r = row
+    while True:
+        letters = chr(ord("A") + (r % 26)) + letters
+        r = r // 26 - 1
+        if r < 0:
+            break
+    return f"{letters}{col + 1}"
+
+
+def _compile_column_grid(action: Dict[str, Any]) -> List[Dict[str, Any]]:
+    grid_name = str(action["name"])
+    storey = action.get("storey") or action.get("storey_name")
+    origin_x = float(action["grid_origin_x"])
+    origin_y = float(action["grid_origin_y"])
+    base_z = float(action["base_z"])
+    bays_x = int(action["bays_x"])
+    bays_y = int(action["bays_y"])
+    spacing_x = float(action["spacing_x"])
+    spacing_y = float(action["spacing_y"])
+    col_width = float(action["column_width"])
+    col_depth = float(action["column_depth"])
+    col_height = float(action["column_height"])
+    rotation_deg = float(action.get("rotation_deg") or 0.0)
+
+    base_semantics = dict(action.get("semantics") or {})
+    grid_id = str(base_semantics.get("element_id") or _slug(grid_name))
+
+    columns: List[Dict[str, Any]] = []
+    for row in range(bays_y + 1):
+        for col in range(bays_x + 1):
+            label = _column_label(row, col)
+            element_name = f"{grid_name}-Col-{label}"
+            x = origin_x + col * spacing_x
+            y = origin_y + row * spacing_y
+
+            semantics = copy.deepcopy(base_semantics)
+            semantics["element_id"] = f"{grid_id}__col_{label.lower()}"
+            semantics.setdefault("parent_id", grid_id)
+            semantics.setdefault("assembly_id", grid_id)
+            semantics.setdefault("subrole", "grid_column")
+            group_path = list(semantics.get("group_path") or [])
+            if "Columns" not in group_path:
+                semantics["group_path"] = group_path + ["Columns"]
+
+            column = _inherit_metadata(
+                action,
+                {
+                    "type": "create_column",
+                    "name": element_name,
+                    "storey": storey,
+                    "x": x,
+                    "y": y,
+                    "base_z": base_z,
+                    "width": col_width,
+                    "depth": col_depth,
+                    "height": col_height,
+                    "rotation_deg": rotation_deg,
+                    "semantics": semantics,
+                },
+            )
+            columns.append(_ensure_semantic_identity(column))
+    return columns
+
+
+def _compile_perimeter_walls(action: Dict[str, Any]) -> List[Dict[str, Any]]:
+    wall_name = str(action["name"])
+    storey = action.get("storey") or action.get("storey_name")
+    corners = list(action["corners"])
+    base_z = float(action["base_z"])
+    height = float(action["height"])
+    thickness = float(action["thickness"])
+
+    base_semantics = dict(action.get("semantics") or {})
+    wall_id = str(base_semantics.get("element_id") or _slug(wall_name))
+
+    walls: List[Dict[str, Any]] = []
+    count = len(corners)
+    for index in range(count):
+        x1, y1 = float(corners[index][0]), float(corners[index][1])
+        x2, y2 = float(corners[(index + 1) % count][0]), float(corners[(index + 1) % count][1])
+        segment_label = f"{index + 1:02d}"
+        element_name = f"{wall_name}-Seg-{segment_label}"
+
+        semantics = copy.deepcopy(base_semantics)
+        semantics["element_id"] = f"{wall_id}__seg_{segment_label}"
+        semantics.setdefault("parent_id", wall_id)
+        semantics.setdefault("assembly_id", wall_id)
+        semantics.setdefault("subrole", "perimeter_wall")
+        group_path = list(semantics.get("group_path") or [])
+        if "Walls" not in group_path:
+            semantics["group_path"] = group_path + ["Walls"]
+
+        wall = _inherit_metadata(
+            action,
+            {
+                "type": "create_wall",
+                "name": element_name,
+                "storey": storey,
+                "x1": x1,
+                "y1": y1,
+                "x2": x2,
+                "y2": y2,
+                "base_z": base_z,
+                "height": height,
+                "thickness": thickness,
+                "semantics": semantics,
+            },
+        )
+        walls.append(_ensure_semantic_identity(wall))
+    return walls
+
+
+def _compile_floor_plate(action: Dict[str, Any]) -> List[Dict[str, Any]]:
+    plate_name = str(action["name"])
+    storey = action.get("storey") or action.get("storey_name")
+    x = float(action["x"])
+    y = float(action["y"])
+    z = float(action["z"])
+    length = float(action["length"])
+    width = float(action["width"])
+    thickness = float(action["thickness"])
+    rotation_deg = float(action.get("rotation_deg") or 0.0)
+    include_beams = bool(action.get("include_edge_beams"))
+
+    base_semantics = dict(action.get("semantics") or {})
+    plate_id = str(base_semantics.get("element_id") or _slug(plate_name))
+
+    results: List[Dict[str, Any]] = []
+
+    # Slab
+    slab_semantics = copy.deepcopy(base_semantics)
+    slab_semantics["element_id"] = f"{plate_id}__slab"
+    slab_semantics.setdefault("parent_id", plate_id)
+    slab_semantics.setdefault("assembly_id", plate_id)
+    slab_semantics.setdefault("subrole", "floor_slab")
+    group_path = list(slab_semantics.get("group_path") or [])
+    if "Slabs" not in group_path:
+        slab_semantics["group_path"] = group_path + ["Slabs"]
+
+    slab = _inherit_metadata(
+        action,
+        {
+            "type": "create_rect_slab",
+            "name": f"{plate_name}-Slab",
+            "storey": storey,
+            "x": x,
+            "y": y,
+            "z": z,
+            "width": length,
+            "depth": width,
+            "thickness": thickness,
+            "rotation_deg": rotation_deg,
+            "semantics": slab_semantics,
+        },
+    )
+    results.append(_ensure_semantic_identity(slab))
+
+    # Edge beams
+    if include_beams:
+        beam_width = float(action["beam_width"])
+        beam_depth = float(action["beam_depth"])
+        angle = math.radians(rotation_deg)
+        cos_a = math.cos(angle)
+        sin_a = math.sin(angle)
+
+        # The four corners of the floor plate in world coordinates
+        # Local corners: (0,0), (length,0), (length,width), (0,width)
+        local_corners = [
+            (0.0, 0.0),
+            (length, 0.0),
+            (length, width),
+            (0.0, width),
+        ]
+        world_corners = [
+            (x + cos_a * lx - sin_a * ly, y + sin_a * lx + cos_a * ly)
+            for lx, ly in local_corners
+        ]
+
+        beam_labels = ["South", "East", "North", "West"]
+        for beam_index in range(4):
+            bx1, by1 = world_corners[beam_index]
+            bx2, by2 = world_corners[(beam_index + 1) % 4]
+            beam_label = beam_labels[beam_index]
+            element_name = f"{plate_name}-Beam-{beam_label}"
+
+            beam_semantics = copy.deepcopy(base_semantics)
+            beam_semantics["element_id"] = f"{plate_id}__beam_{beam_label.lower()}"
+            beam_semantics.setdefault("parent_id", plate_id)
+            beam_semantics.setdefault("assembly_id", plate_id)
+            beam_semantics.setdefault("subrole", "edge_beam")
+            beam_group_path = list(beam_semantics.get("group_path") or [])
+            if "Beams" not in beam_group_path:
+                beam_semantics["group_path"] = beam_group_path + ["Beams"]
+
+            beam = _inherit_metadata(
+                action,
+                {
+                    "type": "create_beam",
+                    "name": element_name,
+                    "storey": storey,
+                    "x1": bx1,
+                    "y1": by1,
+                    "x2": bx2,
+                    "y2": by2,
+                    "base_z": z,
+                    "width": beam_width,
+                    "depth": beam_depth,
+                    "semantics": beam_semantics,
+                },
+            )
+            results.append(_ensure_semantic_identity(beam))
+
+    return results
+
+
+def _compile_facade_grid(action: Dict[str, Any]) -> List[Dict[str, Any]]:
+    facade_name = str(action["name"])
+    storey = action.get("storey") or action.get("storey_name")
+    start_x = float(action["start_x"])
+    start_y = float(action["start_y"])
+    end_x = float(action["end_x"])
+    end_y = float(action["end_y"])
+    base_z = float(action["base_z"])
+    height = float(action["height"])
+    panel_width = float(action["panel_width"])
+    panel_height = float(action["panel_height"])
+    panel_thickness = float(action["panel_thickness"])
+    rotation_degrees = float(action.get("rotation_degrees") or 0.0)
+
+    base_semantics = dict(action.get("semantics") or {})
+    facade_id = str(base_semantics.get("element_id") or _slug(facade_name))
+
+    semantics = copy.deepcopy(base_semantics)
+    semantics["element_id"] = facade_id
+    semantics.setdefault("subrole", "facade_curtain_wall")
+    group_path = list(semantics.get("group_path") or [])
+    if "Curtain Walls" not in group_path:
+        semantics["group_path"] = group_path + ["Curtain Walls"]
+
+    top_z = base_z + height
+    curtain_wall = _inherit_metadata(
+        action,
+        {
+            "type": "create_curtain_wall",
+            "name": facade_name,
+            "storey": storey,
+            "x1": start_x,
+            "y1": start_y,
+            "x2": end_x,
+            "y2": end_y,
+            "base_z": base_z,
+            "top_z": top_z,
+            "panel_width": panel_width,
+            "panel_height": panel_height,
+            "thickness": panel_thickness,
+            "rotation_degrees": rotation_degrees,
+            "semantics": semantics,
+        },
+    )
+    return [_ensure_semantic_identity(curtain_wall)]
 
 
 def _apply_edit_action(state: List[Dict[str, Any]], action: Dict[str, Any], *, index: int) -> None:

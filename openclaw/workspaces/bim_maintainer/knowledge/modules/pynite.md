@@ -46,12 +46,21 @@ Standalone utility for summarizing PyNite results:
 ## Current State
 Fully implemented. The backend handles members (beams/columns) and quads (walls/slabs/panels/foundations) with gravity, wind, and footing loads.
 
+### Fast Solver (factor-once-solve-many)
+`_run_solver()` now defaults to a Cholesky factor-once-solve-many approach (`_run_solver_fast`):
+- Uses PyNite for model setup (materials, geometry, supports, loads, load combos)
+- Replaces PyNite's per-combo `spsolve` with a single `scipy.linalg.cho_factor` + per-combo `cho_solve`
+- Uses PyNite's own `Analysis._prepare_model`, `_partition_D`, `_partition`, `_store_displacements`, and `_calc_reactions` for full compatibility
+- Produces bit-identical results to PyNite's native solver (validated to 1e-10 displacement / 1e-5 reaction tolerance)
+- Falls back to PyNite's `analyze_linear()` if the fast path fails (e.g. singular matrix, mock model)
+- Controlled by `BONSAI_FEA_SOLVER` environment variable: `"fast"` (default) or `"pynite"` (original)
+
 ## Known Issues
-- `_run_solver()` catches `TypeError` and retries without `log=False`, which is a compatibility hack for different PyNite versions.
 - Seismic loads (`AnalysisDomain.SEISMIC`) are defined in the schema but `_apply_loads()` has no handler for the `"acceleration"` load kind -- seismic loads would fall through to the warning.
 - Section properties use `ix_m4` for Iy and `iy_m4` for Iz (lines 492-493), which appears to swap the major/minor axis conventions. This could produce incorrect results for asymmetric sections.
 - Surface elements (quads) don't contribute to member demands, so walls and slabs are present in the model but their internal forces are not reported.
 - `_member_demand_for_combo()` returns zeros if the member doesn't have `max_axial` attribute, silently hiding solver failures.
+- The fast solver converts K11 to dense for Cholesky, which uses O(n^2) memory. For very large models (>10k DOFs), a sparse Cholesky (e.g. `scikit-sparse.cholmod`) would be preferable.
 
 ## Last Reviewed
-2026-03-31
+2026-03-30

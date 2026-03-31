@@ -140,6 +140,18 @@ def validate_action(index: int, action: Dict[str, Any], *, allow_semantic: bool 
     if action_type == "create_connection_plate":
         _require_numeric_fields(index, action, ("center_x", "center_y", "base_z", "width", "depth", "thickness"))
         return
+    if action_type == "generate_column_grid":
+        _require_column_grid_fields(index, action)
+        return
+    if action_type == "generate_perimeter_walls":
+        _require_perimeter_walls_fields(index, action)
+        return
+    if action_type == "generate_floor_plate":
+        _require_floor_plate_fields(index, action)
+        return
+    if action_type == "generate_facade_grid":
+        _require_facade_grid_fields(index, action)
+        return
 
     numeric_requirements = {
         "ensure_storey": ("elevation",),
@@ -230,6 +242,12 @@ def _require_numeric_fields(index: int, action: Dict[str, Any], fields: Iterable
             "rotation_degrees",
             "end_z",
             "sill_height",
+            "grid_origin_x",
+            "grid_origin_y",
+            "start_x",
+            "start_y",
+            "end_x",
+            "end_y",
         ):
             if value <= 0:
                 raise ValidationError(f"Action {index} field '{field}' must be greater than zero.")
@@ -304,14 +322,27 @@ def _coerce_numeric_fields(action: Dict[str, Any]) -> None:
         "panel_width",
         "panel_height",
         "panel_gap",
+        "panel_thickness",
         "base_z",
         "top_z",
         "end_z",
         "offset_along_wall",
         "sill_height",
-        "dx",
-        "dy",
-        "dz",
+        "grid_origin_x",
+        "grid_origin_y",
+        "bays_x",
+        "bays_y",
+        "spacing_x",
+        "spacing_y",
+        "column_width",
+        "column_depth",
+        "column_height",
+        "beam_width",
+        "beam_depth",
+        "start_x",
+        "start_y",
+        "end_x",
+        "end_y",
     }
     for field in numeric_fields:
         value = action.get(field)
@@ -415,4 +446,49 @@ def _require_stair_run_fields(index: int, action: Dict[str, Any]) -> None:
         index,
         action,
         ("x", "y", "base_z", "width", "tread_depth", "riser_height", "step_count", "thickness"),
+    )
+
+
+def _require_column_grid_fields(index: int, action: Dict[str, Any]) -> None:
+    _require_numeric_fields(
+        index,
+        action,
+        ("grid_origin_x", "grid_origin_y", "base_z", "spacing_x", "spacing_y", "column_width", "column_depth", "column_height"),
+    )
+    for field in ("bays_x", "bays_y"):
+        value = action.get(field)
+        if not isinstance(value, (int, float)):
+            raise ValidationError(f"Action {index} field '{field}' must be numeric.")
+        if int(value) < 0:
+            raise ValidationError(f"Action {index} field '{field}' must be non-negative.")
+
+
+def _require_perimeter_walls_fields(index: int, action: Dict[str, Any]) -> None:
+    _require_numeric_fields(index, action, ("base_z", "height", "thickness"))
+    corners = action.get("corners")
+    if not isinstance(corners, list) or len(corners) < 3:
+        raise ValidationError(f"Action {index} generate_perimeter_walls requires at least 3 corner vertices.")
+    for corner_index, corner in enumerate(corners):
+        if not isinstance(corner, (list, tuple)) or len(corner) < 2:
+            raise ValidationError(f"Action {index} corners[{corner_index}] must be an [x, y] pair.")
+        if not isinstance(corner[0], (int, float)) or not isinstance(corner[1], (int, float)):
+            raise ValidationError(f"Action {index} corners[{corner_index}] values must be numeric.")
+
+
+def _require_floor_plate_fields(index: int, action: Dict[str, Any]) -> None:
+    _require_numeric_fields(index, action, ("x", "y", "z", "length", "width", "thickness"))
+    if action.get("include_edge_beams"):
+        for field in ("beam_width", "beam_depth"):
+            value = action.get(field)
+            if not isinstance(value, (int, float)):
+                raise ValidationError(f"Action {index} field '{field}' is required when include_edge_beams is true.")
+            if value <= 0:
+                raise ValidationError(f"Action {index} field '{field}' must be greater than zero.")
+
+
+def _require_facade_grid_fields(index: int, action: Dict[str, Any]) -> None:
+    _require_numeric_fields(
+        index,
+        action,
+        ("start_x", "start_y", "end_x", "end_y", "base_z", "height", "panel_width", "panel_height", "panel_thickness"),
     )

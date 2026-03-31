@@ -1,7 +1,8 @@
 # Active Project
 
-**retail_terrace_concept**
+**five_story_mezzanine**
 
-Multi-storey retail building concept with terraced massing. Existing output at `out/retail_terrace_concept/`.
+5-story commercial building with steel frame, mezzanine decks on floors 3-4, steel cladding, glass storefront. ~500-600 elements estimated.
 
-Project files: `projects/retail_terrace_concept/`
+Project files: `projects/five_story_mezzanine/`
+Output: `out/five_story_mezzanine/`

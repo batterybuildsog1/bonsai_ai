@@ -2,11 +2,13 @@
 
 Architecture:
     1. Assembly loop in Python/NumPy (vectorized matrix ops, no per-element interop overhead)
-    2. Factor-once-solve-many via bonsai_fea.solve_factored (Mojo -> scipy Cholesky)
+       OR batch assembly via Mojo raw pointers (crosses boundary once, not per-element)
+    2. Factor-once-solve-many via scipy Cholesky
     3. Post-processing in NumPy
 
-This avoids the bottleneck of the pure-Mojo assembly path (where creating
-PythonObject tuples for every matrix element index is slower than NumPy's C loops).
+The Mojo batch assembly path (assemble_batch / solve_batch) extracts raw pointers
+from numpy arrays and runs the entire element loop in pure Mojo -- no PythonObject
+overhead per element. This is the fastest path for medium-to-large problems.
 """
 
 import os
@@ -14,13 +16,15 @@ import sys
 import numpy as np
 from scipy.linalg import cho_factor, cho_solve
 
-# Import the Mojo module for Cholesky solve
+# Import the Mojo module for batch assembly + Cholesky solve
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
     import bonsai_fea as _mojo
     _HAS_MOJO = True
+    _HAS_BATCH = hasattr(_mojo, 'assemble_batch')
 except ImportError:
     _HAS_MOJO = False
+    _HAS_BATCH = False
 
 
 def beam_local_stiffness(E, A, Iy, Iz, J, G, L):
@@ -151,6 +155,10 @@ def assemble(nodes, elements, properties):
 def solve(nodes, elements, properties, loads, supports):
     """Full FEA solve: assemble + factor-once-solve-many + post-process.
 
+    Automatically selects the fastest available path:
+    1. Mojo batch (if compiled module has assemble_batch): raw-pointer assembly
+    2. NumPy assembly + scipy Cholesky (fallback)
+
     Args:
         nodes: (n_nodes, 3) float64 array of [x, y, z] coordinates.
         elements: (n_elements, 2) int array of [node_i, node_j] connectivity.
@@ -166,6 +174,27 @@ def solve(nodes, elements, properties, loads, supports):
             n_free_dofs: int
             free_dofs: array
             fixed_dofs: array
+    """
+    # Use Mojo batch solve if available (fastest path)
+    if _HAS_BATCH:
+        return solve_mojo_batch(nodes, elements, properties, loads, supports)
+
+    return solve_numpy(nodes, elements, properties, loads, supports)
+
+
+def solve_mojo_batch(nodes, elements, properties, loads, supports):
+    """Full FEA solve using Mojo batch assembly (raw pointer, minimal interop).
+
+    The assembly loop runs entirely in Mojo with direct pointer access to
+    numpy arrays. Crosses the Python/Mojo boundary once instead of per-element.
+    """
+    return _mojo.solve_batch(nodes, elements, properties, loads, supports)
+
+
+def solve_numpy(nodes, elements, properties, loads, supports):
+    """Full FEA solve using NumPy assembly + scipy Cholesky.
+
+    Fallback path when Mojo batch assembly is not available.
     """
     n_nodes = nodes.shape[0]
     n_elements = elements.shape[0]

@@ -15,8 +15,14 @@ Return only JSON that matches the provided schema.
 
 Rules:
 - Use metric units in meters.
-- Use only these action types: ensure_storey, create_rect_slab, create_wall, create_column, create_beam, create_panel, create_window, create_door, create_curtain_wall, create_footing, create_stair_run, create_stair_landing, create_connection_plate, update_element, delete_element, move_element, replace_section, rebuild_branch.
+- Use only these action types: ensure_storey, create_rect_slab, create_wall, create_column, create_beam, create_panel, create_window, create_door, create_curtain_wall, create_footing, create_stair_run, create_stair_landing, create_connection_plate, generate_column_grid, generate_perimeter_walls, generate_floor_plate, generate_facade_grid, update_element, delete_element, move_element, replace_section, rebuild_branch.
 - Prefer a small number of clear actions over noisy micro-actions.
+- **Parametric generators** reduce token usage and planner rounds for repetitive patterns. Prefer these over many individual actions:
+  - `generate_column_grid` for regular column grids. Specify bays_x, bays_y, spacing_x, spacing_y, and column dimensions. Compiles to (bays_x+1)*(bays_y+1) create_column calls.
+  - `generate_perimeter_walls` for walls around a footprint polygon. Specify corners as [[x,y],...], height, and thickness. Compiles to one create_wall per edge.
+  - `generate_floor_plate` for a rectangular slab with optional perimeter beams. Set include_edge_beams=true with beam_width and beam_depth for framed floors.
+  - `generate_facade_grid` for curtain wall facades. Specify start/end points and panel dimensions. Compiles to a single create_curtain_wall.
+- Fall back to individual create_* actions only when the pattern is irregular or custom.
 - Interior partitions should be modeled as create_wall actions.
 - Steel framing members should be modeled as create_beam actions when needed.
 - Steel connection details should prefer create_connection_plate actions with center_x, center_y, base_z, width, depth, and thickness.

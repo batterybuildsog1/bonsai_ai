@@ -262,6 +262,125 @@ TOOL_SPECS: List[ToolSpec] = [
             "required": ["name", "storey_name", "x", "y", "base_z", "width", "height", "rotation_degrees", "panel_width", "panel_height", "panel_thickness"],
         },
     ),
+    # --- Parametric Generators ---
+    ToolSpec(
+        name="generate_column_grid",
+        description=(
+            "Generate a rectangular column grid. Compiles into (bays_x+1) * (bays_y+1) create_column calls. "
+            "Use this instead of specifying individual columns when the layout follows a regular grid."
+        ),
+        schema={
+            "type": "object",
+            "additionalProperties": False,
+            "properties": _with_common_metadata(
+                {
+                    "name": _string("Grid name, used as prefix for generated column names."),
+                    "storey_name": _string("Storey that contains the columns."),
+                    "grid_origin_x": _number("Grid origin X coordinate in meters."),
+                    "grid_origin_y": _number("Grid origin Y coordinate in meters."),
+                    "base_z": _number("Column base Z elevation in meters."),
+                    "bays_x": {"type": "integer", "description": "Number of bays in the X direction."},
+                    "bays_y": {"type": "integer", "description": "Number of bays in the Y direction."},
+                    "spacing_x": _number("Bay spacing in X direction in meters."),
+                    "spacing_y": _number("Bay spacing in Y direction in meters."),
+                    "column_width": _number("Column cross-section width in meters."),
+                    "column_depth": _number("Column cross-section depth in meters."),
+                    "column_height": _number("Column height in meters."),
+                    "rotation_deg": _number("Optional rotation of columns around Z in degrees."),
+                }
+            ),
+            "required": [
+                "name", "storey_name", "grid_origin_x", "grid_origin_y", "base_z",
+                "bays_x", "bays_y", "spacing_x", "spacing_y",
+                "column_width", "column_depth", "column_height",
+            ],
+        },
+    ),
+    ToolSpec(
+        name="generate_perimeter_walls",
+        description=(
+            "Generate walls around a polygon perimeter. Compiles into len(corners) create_wall calls "
+            "connecting consecutive vertices. The polygon is automatically closed."
+        ),
+        schema={
+            "type": "object",
+            "additionalProperties": False,
+            "properties": _with_common_metadata(
+                {
+                    "name": _string("Perimeter wall group name."),
+                    "storey_name": _string("Storey that contains the walls."),
+                    "corners": {
+                        "type": "array",
+                        "description": "Array of [x, y] polygon vertices defining the perimeter in meters.",
+                        "items": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2},
+                    },
+                    "base_z": _number("Wall base Z elevation in meters."),
+                    "height": _number("Wall height in meters."),
+                    "thickness": _number("Wall thickness in meters."),
+                }
+            ),
+            "required": ["name", "storey_name", "corners", "base_z", "height", "thickness"],
+        },
+    ),
+    ToolSpec(
+        name="generate_floor_plate",
+        description=(
+            "Generate a rectangular floor plate with optional perimeter edge beams. "
+            "Compiles into 1 create_rect_slab plus optionally 4 create_beam calls."
+        ),
+        schema={
+            "type": "object",
+            "additionalProperties": False,
+            "properties": _with_common_metadata(
+                {
+                    "name": _string("Floor plate name."),
+                    "storey_name": _string("Storey that contains the floor plate."),
+                    "x": _number("Floor plate origin X in meters."),
+                    "y": _number("Floor plate origin Y in meters."),
+                    "z": _number("Floor plate elevation in meters."),
+                    "length": _number("Floor plate length in meters."),
+                    "width": _number("Floor plate width in meters."),
+                    "thickness": _number("Slab thickness in meters."),
+                    "rotation_deg": _number("Optional rotation around Z in degrees."),
+                    "include_edge_beams": {"type": "boolean", "description": "If true, add beams around the perimeter."},
+                    "beam_width": _number("Edge beam width in meters (required if include_edge_beams is true)."),
+                    "beam_depth": _number("Edge beam depth in meters (required if include_edge_beams is true)."),
+                }
+            ),
+            "required": ["name", "storey_name", "x", "y", "z", "length", "width", "thickness"],
+        },
+    ),
+    ToolSpec(
+        name="generate_facade_grid",
+        description=(
+            "Generate a curtain wall facade along a line. Compiles into 1 create_curtain_wall call. "
+            "Use this for parametric facade definitions with panel dimensions."
+        ),
+        schema={
+            "type": "object",
+            "additionalProperties": False,
+            "properties": _with_common_metadata(
+                {
+                    "name": _string("Facade name."),
+                    "storey_name": _string("Storey that contains the facade."),
+                    "start_x": _number("Facade line start X in meters."),
+                    "start_y": _number("Facade line start Y in meters."),
+                    "end_x": _number("Facade line end X in meters."),
+                    "end_y": _number("Facade line end Y in meters."),
+                    "base_z": _number("Facade base Z in meters."),
+                    "height": _number("Facade height in meters."),
+                    "panel_width": _number("Panel width in meters."),
+                    "panel_height": _number("Panel height in meters."),
+                    "panel_thickness": _number("Panel thickness in meters."),
+                    "rotation_degrees": _number("Facade rotation around Z in degrees."),
+                }
+            ),
+            "required": [
+                "name", "storey_name", "start_x", "start_y", "end_x", "end_y",
+                "base_z", "height", "panel_width", "panel_height", "panel_thickness",
+            ],
+        },
+    ),
 ]
 
 
