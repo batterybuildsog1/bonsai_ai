@@ -1,0 +1,7 @@
+Create a simple steel framing concept in meters.
+- one Level 0 at elevation 0
+- four steel columns forming a rectangular bay
+- horizontal steel members between columns to create a basic multi-piece frame
+- if beams or attachment details such as base plates, bolts, or gussets are unsupported, state that clearly in assumptions and approximate with the closest supported primitives
+
+Return a buildable model using the currently supported BIM primitives only.

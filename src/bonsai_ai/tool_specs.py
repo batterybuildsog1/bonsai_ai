@@ -1,0 +1,306 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Dict, List
+
+from bonsai_ai_core.action_catalog import FOUNDATION_OBJECT, PRESENTATION_OBJECT, SEMANTICS_OBJECT
+
+
+JsonDict = Dict[str, object]
+
+
+@dataclass(frozen=True)
+class ToolSpec:
+    name: str
+    description: str
+    schema: JsonDict
+
+
+def _number(description: str) -> JsonDict:
+    return {"type": "number", "description": description}
+
+
+def _string(description: str) -> JsonDict:
+    return {"type": "string", "description": description}
+
+
+def _with_common_metadata(properties: Dict[str, JsonDict]) -> Dict[str, JsonDict]:
+    return {
+        **properties,
+        "semantics": SEMANTICS_OBJECT,
+        "presentation": PRESENTATION_OBJECT,
+        "foundation": FOUNDATION_OBJECT,
+    }
+
+
+TOOL_SPECS: List[ToolSpec] = [
+    ToolSpec(
+        name="ensure_project",
+        description="Initialize the IFC project hierarchy if it does not exist yet.",
+        schema={
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "project_name": _string("Project name."),
+                "site_name": _string("Site name."),
+                "building_name": _string("Building name."),
+            },
+            "required": ["project_name", "site_name", "building_name"],
+        },
+    ),
+    ToolSpec(
+        name="ensure_storey",
+        description="Create a building storey if it does not exist.",
+        schema={
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "name": _string("Storey name, such as Level 0 or Level 2."),
+                "elevation": _number("Storey elevation in meters."),
+                "semantics": SEMANTICS_OBJECT,
+            },
+            "required": ["name", "elevation"],
+        },
+    ),
+    ToolSpec(
+        name="create_rectangular_slab",
+        description="Create a rectangular slab as a native IfcSlab element.",
+        schema={
+            "type": "object",
+            "additionalProperties": False,
+            "properties": _with_common_metadata(
+                {
+                    "name": _string("Element name."),
+                    "storey_name": _string("Storey that contains the slab."),
+                    "x": _number("Local origin X in meters."),
+                    "y": _number("Local origin Y in meters."),
+                    "z": _number("Base elevation in meters."),
+                    "length": _number("Slab length in meters."),
+                    "width": _number("Slab width in meters."),
+                    "thickness": _number("Slab thickness in meters."),
+                    "rotation_deg": _number("Optional rotation around Z in degrees."),
+                }
+            ),
+            "required": ["name", "storey_name", "x", "y", "z", "length", "width", "thickness"],
+        },
+    ),
+    ToolSpec(
+        name="create_wall",
+        description="Create a straight native IfcWall between two XY points.",
+        schema={
+            "type": "object",
+            "additionalProperties": False,
+            "properties": _with_common_metadata(
+                {
+                    "name": _string("Wall name."),
+                    "storey_name": _string("Storey that contains the wall."),
+                    "start_x": _number("Wall start X in meters."),
+                    "start_y": _number("Wall start Y in meters."),
+                    "end_x": _number("Wall end X in meters."),
+                    "end_y": _number("Wall end Y in meters."),
+                    "base_z": _number("Wall base Z in meters."),
+                    "height": _number("Wall height in meters."),
+                    "thickness": _number("Wall thickness in meters."),
+                }
+            ),
+            "required": ["name", "storey_name", "start_x", "start_y", "end_x", "end_y", "base_z", "height", "thickness"],
+        },
+    ),
+    ToolSpec(
+        name="create_column",
+        description="Create a native IfcColumn using a rectangular profile.",
+        schema={
+            "type": "object",
+            "additionalProperties": False,
+            "properties": _with_common_metadata(
+                {
+                    "name": _string("Column name."),
+                    "storey_name": _string("Storey that contains the column."),
+                    "x": _number("Column origin X in meters."),
+                    "y": _number("Column origin Y in meters."),
+                    "base_z": _number("Column base Z in meters."),
+                    "width": _number("Column width in meters."),
+                    "depth": _number("Column depth in meters."),
+                    "height": _number("Column height in meters."),
+                    "rotation_deg": _number("Optional rotation around Z in degrees."),
+                }
+            ),
+            "required": ["name", "storey_name", "x", "y", "base_z", "width", "depth", "height"],
+        },
+    ),
+    ToolSpec(
+        name="create_beam",
+        description="Create a native IfcBeam between two 3D points using a rectangular profile.",
+        schema={
+            "type": "object",
+            "additionalProperties": False,
+            "properties": _with_common_metadata(
+                {
+                    "name": _string("Beam name."),
+                    "storey_name": _string("Storey that contains the beam."),
+                    "start_x": _number("Beam start X in meters."),
+                    "start_y": _number("Beam start Y in meters."),
+                    "end_x": _number("Beam end X in meters."),
+                    "end_y": _number("Beam end Y in meters."),
+                    "base_z": _number("Beam start Z in meters."),
+                    "end_z": _number("Optional beam end Z in meters."),
+                    "width": _number("Beam width in meters."),
+                    "depth": _number("Beam depth in meters."),
+                }
+            ),
+            "required": ["name", "storey_name", "start_x", "start_y", "end_x", "end_y", "base_z", "width", "depth"],
+        },
+    ),
+    ToolSpec(
+        name="create_panel",
+        description="Create a native IfcPlate panel, vertical or horizontal.",
+        schema={
+            "type": "object",
+            "additionalProperties": False,
+            "properties": _with_common_metadata(
+                {
+                    "name": _string("Panel name."),
+                    "storey_name": _string("Storey that contains the panel."),
+                    "x": _number("Panel origin X in meters."),
+                    "y": _number("Panel origin Y in meters."),
+                    "base_z": _number("Panel base Z in meters."),
+                    "width": _number("Panel width in meters."),
+                    "height": _number("Panel height in meters for vertical panels."),
+                    "depth": _number("Panel depth in meters for horizontal panels."),
+                    "thickness": _number("Panel thickness in meters."),
+                    "orientation": {"type": "string", "enum": ["vertical", "horizontal"], "description": "Panel orientation."},
+                    "rotation_deg": _number("Optional rotation around Z in degrees."),
+                }
+            ),
+            "required": ["name", "storey_name", "x", "y", "base_z", "width", "thickness"],
+        },
+    ),
+    ToolSpec(
+        name="create_footing",
+        description="Create a native IfcFooting for a support condition.",
+        schema={
+            "type": "object",
+            "additionalProperties": False,
+            "properties": _with_common_metadata(
+                {
+                    "name": _string("Footing name."),
+                    "storey_name": _string("Storey that contains the footing."),
+                    "x": _number("Footing origin X in meters."),
+                    "y": _number("Footing origin Y in meters."),
+                    "base_z": _number("Bottom-of-footing Z in meters."),
+                    "length": _number("Footing length in meters."),
+                    "width": _number("Footing width in meters."),
+                    "thickness": _number("Footing thickness in meters."),
+                    "rotation_deg": _number("Optional rotation around Z in degrees."),
+                }
+            ),
+            "required": ["name", "storey_name", "x", "y", "base_z", "length", "width", "thickness"],
+        },
+    ),
+    ToolSpec(
+        name="create_door",
+        description="Create a native IfcDoor hosted in an existing wall.",
+        schema={
+            "type": "object",
+            "additionalProperties": False,
+            "properties": _with_common_metadata(
+                {
+                    "name": _string("Door name."),
+                    "storey_name": _string("Storey that contains the door."),
+                    "wall_name": _string("Exact wall name to host the door."),
+                    "offset_along_wall": _number("Distance from wall start in meters."),
+                    "width": _number("Door width in meters."),
+                    "height": _number("Door height in meters."),
+                    "thickness": _number("Door leaf thickness in meters."),
+                }
+            ),
+            "required": ["name", "storey_name", "wall_name", "offset_along_wall", "width", "height", "thickness"],
+        },
+    ),
+    ToolSpec(
+        name="create_window",
+        description="Create a native IfcWindow hosted in an existing wall.",
+        schema={
+            "type": "object",
+            "additionalProperties": False,
+            "properties": _with_common_metadata(
+                {
+                    "name": _string("Window name."),
+                    "storey_name": _string("Storey that contains the window."),
+                    "wall_name": _string("Exact wall name to host the window."),
+                    "offset_along_wall": _number("Distance from wall start in meters."),
+                    "sill_height": _number("Bottom of window above wall base in meters."),
+                    "width": _number("Window width in meters."),
+                    "height": _number("Window height in meters."),
+                    "thickness": _number("Window depth in meters."),
+                }
+            ),
+            "required": ["name", "storey_name", "wall_name", "offset_along_wall", "sill_height", "width", "height", "thickness"],
+        },
+    ),
+    ToolSpec(
+        name="create_curtain_wall",
+        description="Create a native IfcCurtainWall plus aggregated IfcPlate panels.",
+        schema={
+            "type": "object",
+            "additionalProperties": False,
+            "properties": _with_common_metadata(
+                {
+                    "name": _string("Curtain wall name."),
+                    "storey_name": _string("Storey that contains the curtain wall."),
+                    "x": _number("Facade origin X in meters."),
+                    "y": _number("Facade origin Y in meters."),
+                    "base_z": _number("Facade base Z in meters."),
+                    "width": _number("Overall facade width in meters."),
+                    "height": _number("Overall facade height in meters."),
+                    "rotation_degrees": _number("Facade rotation around Z in degrees."),
+                    "panel_width": _number("Typical panel width in meters."),
+                    "panel_height": _number("Typical panel height in meters."),
+                    "panel_thickness": _number("Panel thickness in meters."),
+                }
+            ),
+            "required": ["name", "storey_name", "x", "y", "base_z", "width", "height", "rotation_degrees", "panel_width", "panel_height", "panel_thickness"],
+        },
+    ),
+]
+
+
+def as_openai_tools() -> List[JsonDict]:
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": spec.name,
+                "description": spec.description,
+                "strict": True,
+                "parameters": spec.schema,
+            },
+        }
+        for spec in TOOL_SPECS
+    ]
+
+
+def as_anthropic_tools() -> List[JsonDict]:
+    return [
+        {
+            "name": spec.name,
+            "description": spec.description,
+            "input_schema": spec.schema,
+        }
+        for spec in TOOL_SPECS
+    ]
+
+
+def as_gemini_tools() -> List[JsonDict]:
+    return [
+        {
+            "name": spec.name,
+            "description": spec.description,
+            "parameters": spec.schema,
+        }
+        for spec in TOOL_SPECS
+    ]
+
+
+def tool_names() -> List[str]:
+    return [spec.name for spec in TOOL_SPECS]

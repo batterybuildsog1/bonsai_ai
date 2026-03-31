@@ -1,0 +1,13 @@
+__pycache__/
+.pytest_cache/
+.venv/
+dist/
+build/
+*.pyc
+*.ifc
+*.blend
+*.blend1
+out/
+.openclaw/
+openclaw/memory/
+openclaw/workspaces/bim_maintainer/memory/

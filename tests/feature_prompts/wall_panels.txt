@@ -1,0 +1,8 @@
+Create a panelized facade concept in meters.
+- one Level 0 at elevation 0
+- a 12m wide curtain wall facade
+- use repeated panels 1.5m wide and 3m high
+- use panel thickness 0.08
+- include any slab or wall context needed
+
+Return a buildable model using the currently supported BIM primitives only.

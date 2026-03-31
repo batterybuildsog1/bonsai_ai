@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bonsai-ai"
+version = "0.1.0"
+description = "Direct AI planning and Bonsai/IFC authoring helpers for Blender."
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [{ name = "OpenAI Codex" }]
+dependencies = [
+  "fastapi>=0.115.0,<1.0.0",
+  "httpx>=0.28.0,<1.0.0",
+  "PyNiteFEA>=1.6.0,<2.0.0",
+  "pydantic>=2.10.0,<3.0.0",
+  "uvicorn>=0.34.0,<1.0.0",
+]
+
+[project.scripts]
+bonsai-ai-bridge = "bonsai_ai_bridge.__main__:main"
+bonsai-ai-design = "bonsai_ai.design_pipeline_cli:main"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.setuptools.packages.find]
+where = ["src"]

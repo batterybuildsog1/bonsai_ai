@@ -1,0 +1,8 @@
+Create a two-level concept in meters.
+- Level 0 at elevation 0
+- Level 1 at elevation 3.5
+- one slab on each level
+- a straight stair between levels with a landing
+- if stairs are unsupported, state that clearly in assumptions and approximate with the closest supported primitives
+
+Return a buildable model using the currently supported BIM primitives only.
