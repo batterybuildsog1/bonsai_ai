@@ -122,12 +122,31 @@ def _build_message(
 def _extract_json(text: str) -> Dict:
     """Extract a JSON object from the agent's response text.
 
-    Tries several strategies:
-    1. Direct JSON parse of the full text
-    2. Extract from markdown code fences
-    3. Find the first { ... } block
+    Handles OpenClaw's JSON envelope (result.payloads[0].text) and
+    tries several fallback strategies.
     """
     stripped = text.strip()
+
+    # Strategy 0: unwrap OpenClaw JSON envelope if present
+    try:
+        envelope = json.loads(stripped)
+        if isinstance(envelope, dict):
+            payloads = (envelope.get("result") or {}).get("payloads", [])
+            if payloads and isinstance(payloads[0], dict) and "text" in payloads[0]:
+                inner = payloads[0]["text"]
+                try:
+                    return json.loads(inner)
+                except json.JSONDecodeError:
+                    stripped = inner.strip()
+            elif isinstance((envelope.get("result") or {}).get("text"), str):
+                try:
+                    return json.loads(envelope["result"]["text"])
+                except json.JSONDecodeError:
+                    stripped = envelope["result"]["text"].strip()
+            elif "actions" in envelope or "version" in envelope:
+                return envelope
+    except json.JSONDecodeError:
+        pass
 
     # Strategy 1: direct parse
     try:

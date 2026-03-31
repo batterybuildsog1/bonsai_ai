@@ -110,8 +110,38 @@ def _find_openclaw() -> Optional[str]:
 # ---------------------------------------------------------------------------
 
 def _extract_json(text: str) -> Dict[str, Any]:
-    """Extract a JSON object from agent response text."""
+    """Extract a JSON object from agent response text.
+
+    Handles OpenClaw's JSON envelope: the actual content may be inside
+    result.payloads[0].text or result.text when --json is used.
+    """
     stripped = text.strip()
+
+    # Strategy 0: unwrap OpenClaw JSON envelope if present
+    try:
+        envelope = json.loads(stripped)
+        if isinstance(envelope, dict):
+            # Try result.payloads[0].text (openclaw --json output)
+            payloads = (envelope.get("result") or {}).get("payloads", [])
+            if payloads and isinstance(payloads[0], dict) and "text" in payloads[0]:
+                inner = payloads[0]["text"]
+                try:
+                    return json.loads(inner)
+                except json.JSONDecodeError:
+                    # Inner text may not be valid JSON, try other strategies below
+                    stripped = inner.strip()
+            # Try result.text
+            elif isinstance((envelope.get("result") or {}).get("text"), str):
+                inner = envelope["result"]["text"]
+                try:
+                    return json.loads(inner)
+                except json.JSONDecodeError:
+                    stripped = inner.strip()
+            # If it already has the keys we want, return as-is
+            elif "phases" in envelope or "actions" in envelope:
+                return envelope
+    except json.JSONDecodeError:
+        pass
 
     # Strategy 1: direct parse
     try:
@@ -182,12 +212,30 @@ def _call_openclaw(message: str, timeout: int, openclaw_bin: str) -> str:
 
     output = result.stdout.strip()
     if not output:
+        # OpenClaw sometimes puts the response in stderr when the gateway
+        # falls back to embedded mode. Check for JSON payloads in stderr.
         stderr = result.stderr.strip()
-        raise PlannerError(
-            f"OpenClaw agent returned no output. "
-            f"Exit code: {result.returncode}. "
-            f"Stderr: {stderr[:500] if stderr else '(empty)'}"
-        )
+        if stderr:
+            # Look for JSON payload in stderr (after diagnostic lines)
+            for line in stderr.split("\n"):
+                line = line.strip()
+                if line.startswith("{") and ("payloads" in line or "actions" in line or "phases" in line):
+                    output = line
+                    break
+            # Also try: find the last JSON block in stderr
+            if not output:
+                import re as _re
+                json_blocks = _re.findall(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', stderr)
+                for block in reversed(json_blocks):
+                    if "payloads" in block or "actions" in block or "phases" in block or "text" in block:
+                        output = block
+                        break
+        if not output:
+            raise PlannerError(
+                f"OpenClaw agent returned no output. "
+                f"Exit code: {result.returncode}. "
+                f"Stderr: {stderr[:500] if stderr else '(empty)'}"
+            )
     return output
 
 
@@ -312,6 +360,14 @@ def _build_execution_prompt(
     # Constraint: only use allowed types
     parts.append(
         f"\nOnly use these action types: {', '.join(allowed)}."
+    )
+
+    # Strongly encourage parametric generators to reduce action count
+    parts.append(
+        "IMPORTANT: Use generate_column_grid for regular column grids (1 action instead of 30+). "
+        "Use generate_floor_plate for rectangular slabs with edge beams (1 action instead of 5). "
+        "Use generate_perimeter_walls for walls around a footprint (1 action instead of 4). "
+        "Keep total actions under 30 by using generators wherever possible."
     )
     parts.append(
         "Other phases handle other element types. Do not duplicate existing elements."
