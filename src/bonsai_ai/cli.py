@@ -5,7 +5,8 @@ import json
 from typing import Dict, List, Sequence, Tuple
 
 from .ifc_author import AuthoringError, IfcAuthor
-from .planner import DEFAULT_MODELS, DEFAULT_ENV_VARS, PlannedToolCall, create_plan
+from .planner import DEFAULT_MODELS, DEFAULT_ENV_VARS, PlannerError, PlannedToolCall, create_plan
+from .openclaw_planner import create_plan_via_openclaw
 
 
 # ---------------------------------------------------------------------------
@@ -84,6 +85,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--output", required=True, help="Path to the IFC file to create or update.")
     parser.add_argument("--prompt", required=True, help="Natural-language building request.")
     parser.add_argument("--dry-run", action="store_true", help="Print the planned tool calls without writing IFC.")
+    parser.add_argument(
+        "--via-openclaw",
+        action="store_true",
+        help="Route model calls through OpenClaw agent (uses subscription auth instead of API keys).",
+    )
     return parser
 
 
@@ -96,6 +102,39 @@ def main(argv: Sequence[str] | None = None) -> int:
     seen_rounds: set = set()
     failed_calls: set = set()
     max_rounds = 12
+
+    use_openclaw = getattr(args, "via_openclaw", False)
+
+    # Helper: call the right planner backend based on --via-openclaw flag.
+    def _do_plan(user_prompt: str, scene_summary: str, progress_summary: str):
+        if use_openclaw:
+            try:
+                return create_plan_via_openclaw(
+                    user_prompt=user_prompt,
+                    scene_summary=scene_summary,
+                    progress_summary=progress_summary,
+                )
+            except PlannerError:
+                # If --provider is also set, fall back to direct API
+                if getattr(args, "provider", None):
+                    print("[openclaw] OpenClaw failed, falling back to direct API...")
+                    return create_plan(
+                        provider=args.provider,
+                        model=args.model,
+                        api_key_env=args.api_key_env or DEFAULT_ENV_VARS[args.provider],
+                        user_prompt=user_prompt,
+                        scene_summary=scene_summary,
+                        progress_summary=progress_summary,
+                    )
+                raise
+        return create_plan(
+            provider=args.provider,
+            model=args.model,
+            api_key_env=args.api_key_env or DEFAULT_ENV_VARS[args.provider],
+            user_prompt=user_prompt,
+            scene_summary=scene_summary,
+            progress_summary=progress_summary,
+        )
 
     # Track per-element repair attempts.  Key = (tool_name, element_name_or_sig).
     # If an element fails targeted repair twice, we escalate to full replan.
@@ -121,10 +160,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
             progress_lines.append(f"REPAIR: attempting targeted repair (round {round_num + 1})")
 
-            plan = create_plan(
-                provider=args.provider,
-                model=args.model,
-                api_key_env=args.api_key_env or DEFAULT_ENV_VARS[args.provider],
+            plan = _do_plan(
                 user_prompt=repair_prompt,
                 scene_summary=author.scene_summary(),
                 progress_summary="\n".join(progress_lines),
@@ -137,10 +173,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 # to the original behaviour).
                 progress_lines.append(f"REPLAN: full round {round_num + 1}")
 
-            plan = create_plan(
-                provider=args.provider,
-                model=args.model,
-                api_key_env=args.api_key_env or DEFAULT_ENV_VARS[args.provider],
+            plan = _do_plan(
                 user_prompt=args.prompt,
                 scene_summary=author.scene_summary(),
                 progress_summary="\n".join(progress_lines),
