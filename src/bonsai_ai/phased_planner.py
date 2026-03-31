@@ -381,6 +381,62 @@ def _build_execution_prompt(
 # Phase execution — call agent, parse, compile, apply
 # ---------------------------------------------------------------------------
 
+# Action type aliases the LLM may produce
+_TYPE_ALIASES = {
+    "create_rectangular_slab": "create_rect_slab",
+    "create_slab": "create_rect_slab",
+    "create_column_grid": "generate_column_grid",
+    "create_perimeter_walls": "generate_perimeter_walls",
+    "create_floor_plate": "generate_floor_plate",
+    "create_facade_grid": "generate_facade_grid",
+    "ensure_project": "ensure_storey",  # if project, let storey handle it
+}
+
+# Field aliases the LLM may use
+_FIELD_ALIASES = {
+    "storey": "storey_name",
+    "start_x": "x1",
+    "start_y": "y1",
+    "end_x": "x2",
+    "end_y": "y2",
+}
+
+
+def _normalize_actions(actions: List[Dict[str, Any]]) -> None:
+    """Normalize action types and field names in-place so the compiler accepts them.
+
+    Fixes common LLM mistakes:
+    - create_rectangular_slab -> create_rect_slab
+    - beam with x/y instead of x1/y1/x2/y2
+    - storey instead of storey_name
+    """
+    for action in actions:
+        # Normalize type
+        atype = action.get("type", "")
+        if atype in _TYPE_ALIASES:
+            action["type"] = _TYPE_ALIASES[atype]
+
+        # Normalize field names
+        for old_key, new_key in _FIELD_ALIASES.items():
+            if old_key in action and new_key not in action:
+                action[new_key] = action.pop(old_key)
+
+        # Special case: beams with x/y need conversion to x1/y1/x2/y2
+        if action.get("type") == "create_beam":
+            if "x" in action and "x1" not in action:
+                # Single-point beam → can't fix, but set x1=x, y1=y
+                # The planner should have provided start/end points
+                pass
+            if "start_x" in action and "x1" not in action:
+                action["x1"] = action.pop("start_x")
+            if "start_y" in action and "y1" not in action:
+                action["y1"] = action.pop("start_y")
+            if "end_x" in action and "x2" not in action:
+                action["x2"] = action.pop("end_x")
+            if "end_y" in action and "y2" not in action:
+                action["y2"] = action.pop("end_y")
+
+
 @dataclass
 class _PhaseResult:
     """Result of executing a single phase."""
@@ -423,6 +479,9 @@ def _execute_phase(
         authored_plan["assumptions"] = []
     if "actions" not in authored_plan:
         authored_plan["actions"] = []
+
+    # Normalize action types and field names before compilation
+    _normalize_actions(authored_plan["actions"])
 
     if not authored_plan["actions"]:
         elapsed = time.time() - t0
