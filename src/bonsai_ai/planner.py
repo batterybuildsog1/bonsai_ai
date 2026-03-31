@@ -188,6 +188,7 @@ def create_plan(
     api_key: Optional[str] = None,
     api_key_env: Optional[str] = None,
     progress_summary: str = "",
+    phase: Optional[str] = None,
 ) -> PlanResult:
     provider_name = provider.strip().lower()
     if provider_name not in DEFAULT_MODELS:

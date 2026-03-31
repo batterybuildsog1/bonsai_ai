@@ -7,6 +7,7 @@ from typing import Dict, List, Sequence, Tuple
 from .ifc_author import AuthoringError, IfcAuthor
 from .planner import DEFAULT_MODELS, DEFAULT_ENV_VARS, PlannerError, PlannedToolCall, create_plan
 from .openclaw_planner import create_plan_via_openclaw
+from .phased_planner import create_phased_plan_via_openclaw
 
 
 # ---------------------------------------------------------------------------
@@ -90,11 +91,48 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Route model calls through OpenClaw agent (uses subscription auth instead of API keys).",
     )
+    parser.add_argument(
+        "--single-phase",
+        action="store_true",
+        help="Use single-shot planner instead of phased plan-then-execute (only with --via-openclaw).",
+    )
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+
+    use_openclaw = getattr(args, "via_openclaw", False)
+    use_single_phase = getattr(args, "single_phase", False)
+
+    # -----------------------------------------------------------------------
+    # Phased planner path — default when --via-openclaw is set.
+    # The phased planner handles its own plan-then-execute loop internally
+    # because it refreshes the scene summary between phases.
+    # -----------------------------------------------------------------------
+    if use_openclaw and not use_single_phase:
+        try:
+            summary = create_phased_plan_via_openclaw(
+                user_prompt=args.prompt,
+                output_path=args.output,
+                dry_run=args.dry_run,
+            )
+        except PlannerError as exc:
+            # If a direct-API provider is also configured, fall back to it
+            if getattr(args, "provider", None):
+                print(f"[phased] Phased planner failed: {exc}")
+                print("[phased] Falling back to single-phase direct API...")
+                # Fall through to the legacy loop below
+            else:
+                raise
+        else:
+            if args.dry_run:
+                print(json.dumps(summary, indent=2))
+            return 0
+
+    # -----------------------------------------------------------------------
+    # Legacy single-phase loop (direct API or --single-phase --via-openclaw)
+    # -----------------------------------------------------------------------
     author = IfcAuthor(args.output)
     all_calls: List[PlannedToolCall] = []
     all_results = []
@@ -102,8 +140,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     seen_rounds: set = set()
     failed_calls: set = set()
     max_rounds = 12
-
-    use_openclaw = getattr(args, "via_openclaw", False)
 
     # Helper: call the right planner backend based on --via-openclaw flag.
     def _do_plan(user_prompt: str, scene_summary: str, progress_summary: str):

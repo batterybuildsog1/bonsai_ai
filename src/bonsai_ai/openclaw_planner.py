@@ -29,12 +29,13 @@ except ModuleNotFoundError:  # pragma: no cover
 
 from .planner import PlannerError, PlanResult, PlannedToolCall, _to_tool_call
 from .tool_specs import TOOL_SPECS
+from .tool_registry import get_tool_summary_for_phase, get_tool_summary_for_phases
 
 # ---------------------------------------------------------------------------
 # Locate the openclaw binary
 # ---------------------------------------------------------------------------
 
-_OPENCLAW_TIMEOUT = 120  # seconds
+_OPENCLAW_TIMEOUT = 300  # seconds — complex buildings need more time
 
 
 def _find_openclaw() -> Optional[str]:
@@ -57,8 +58,14 @@ def _find_openclaw() -> Optional[str]:
 # Build the message that the OpenClaw agent receives
 # ---------------------------------------------------------------------------
 
-def _tool_spec_summary() -> str:
-    """Compact plain-text description of available BIM tools for the prompt."""
+def _tool_spec_summary(phase: Optional[str] = None) -> str:
+    """Compact plain-text description of available BIM tools for the prompt.
+
+    If *phase* is given, returns only tools relevant to that building phase
+    via the tool registry (~85% token reduction). Otherwise returns all tools.
+    """
+    if phase is not None:
+        return get_tool_summary_for_phase(phase)
     lines: List[str] = []
     for spec in TOOL_SPECS:
         required = spec.schema.get("required", [])
@@ -72,42 +79,37 @@ def _build_message(
     scene_summary: str,
     progress_summary: str = "",
 ) -> str:
-    """Construct the prompt message sent to the OpenClaw agent.
+    """Construct a lean prompt for the OpenClaw bim_operator agent.
 
-    The message embeds the BIM planner system prompt, the plan JSON schema,
-    and a summary of available tools so the agent returns a well-formed plan.
+    Option A (lean): Trust the agent's own AGENTS.md charter for BIM domain
+    knowledge and tool awareness. Send only the building request, scene state,
+    and a compact output format hint. This keeps the message under ~1500 chars
+    so OpenClaw + agent context doesn't overwhelm the model.
     """
-    schema_json = json.dumps(plan_schema(), indent=2)
     parts = [
-        SYSTEM_PROMPT.strip(),
+        "Generate a BIM plan as JSON for this building. Respond with ONLY a JSON object:",
+        '{"version":"1", "units":"meters", "summary":"...", "assumptions":[...], "actions":[...]}',
         "",
-        "## Response format",
-        "",
-        "You MUST respond with ONLY a single JSON object matching this schema:",
-        "```json",
-        schema_json,
-        "```",
-        "",
-        "Each action in the 'actions' array must have at least 'type' and 'name'.",
-        "",
-        "## Available action types and their fields",
-        "",
-        _tool_spec_summary(),
+        "Each action: {\"type\":\"<action_type>\", \"name\":\"<element_name>\", ...dimensions/coords...}",
+        "Use generate_column_grid, generate_perimeter_walls, generate_floor_plate for repetitive patterns.",
+        "Use create_wall, create_beam, create_column, create_slab, create_curtain_wall, create_door, create_window for individual elements.",
+        "All dimensions in meters. Build storeys first, then structure, then envelope, then openings.",
     ]
 
     if scene_summary.strip():
-        parts.extend(["", "## Current scene", "", scene_summary.strip()])
+        parts.extend(["", "Current scene: " + scene_summary.strip()])
+    else:
+        parts.extend(["", "Starting from empty scene."])
 
     if progress_summary.strip():
-        parts.extend(["", "## Completed work so far", "", progress_summary.strip()])
+        parts.extend(["", "Completed so far:", progress_summary.strip()])
 
     parts.extend([
         "",
-        "## User request",
-        "",
+        "Building request:",
         user_prompt.strip(),
         "",
-        "Respond with ONLY the JSON plan. No markdown fences, no commentary.",
+        "Respond with ONLY the JSON. No markdown, no commentary.",
     ])
 
     return "\n".join(parts)

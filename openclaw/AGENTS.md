@@ -51,7 +51,25 @@ These are the tools the planner can call. Know them by heart:
 - `create_door` -- hosted in an existing wall
 - `create_window` -- hosted in an existing wall
 
+Parametric generators (compile into multiple primitives):
+- `generate_column_grid` -- regular grid of columns (specify bays_x, bays_y, spacing, column dims)
+- `generate_perimeter_walls` -- walls around a polygon (specify corners array, height, thickness)
+- `generate_floor_plate` -- slab with optional edge beams (specify origin, length, width, include_edge_beams)
+- `generate_facade_grid` -- curtain wall along a line (specify start/end, panel dims)
+
 All dimensions are in meters. Storeys must exist before elements can be placed on them.
+
+## BIM Plan JSON Format
+
+When asked to generate a BIM plan, respond with ONLY a JSON object:
+
+```json
+{"version": "1", "units": "meters", "summary": "...", "assumptions": [...], "actions": [...]}
+```
+
+Each action in the `actions` array must have at least `type` and `name`. Include coordinates (x, y, base_z), dimensions (width, depth, height, thickness), and `storey_name` as needed.
+
+Build order: storeys first, then columns, then beams, then slabs, then envelope (walls, cladding), then openings (doors, windows).
 
 ## Per-Project Memory
 
