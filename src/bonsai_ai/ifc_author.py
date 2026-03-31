@@ -285,6 +285,7 @@ class IfcAuthor:
             building = self.model.by_type("IfcBuilding")[0]
             storey = ifcopenshell.api.root.create_entity(self.model, ifc_class="IfcBuildingStorey", name=name)
             ifcopenshell.api.aggregate.assign_object(self.model, products=[storey], relating_object=building)
+        storey.Elevation = float(elevation)
         matrix = np.eye(4)
         matrix[:, 3][0:3] = (0.0, 0.0, float(elevation))
         ifcopenshell.api.geometry.edit_object_placement(self.model, product=storey, matrix=matrix, is_si=True)
@@ -1102,7 +1103,77 @@ class IfcAuthor:
                 break
         if semantic_samples:
             lines.append(f"Semantic samples: {', '.join(semantic_samples)}")
+        bbox = self._compute_bounding_box()
+        if bbox:
+            xmin, xmax, ymin, ymax, zmin, zmax = bbox
+            lines.append(f"Bounding box: X=[{xmin}, {xmax}] Y=[{ymin}, {ymax}] Z=[{zmin}, {zmax}]")
         return "\n".join(lines) if lines else "Empty IFC model"
+
+    def _compute_bounding_box(self):
+        """Compute an approximate axis-aligned bounding box from element metadata."""
+        xs: List[float] = []
+        ys: List[float] = []
+        zs: List[float] = []
+        spatial_classes = ["IfcSlab", "IfcWall", "IfcColumn", "IfcBeam", "IfcPlate", "IfcFooting", "IfcCurtainWall"]
+        for ifc_class in spatial_classes:
+            for element in self.model.by_type(ifc_class):
+                meta = self._metadata(element)
+                kind = meta.get("StructuralKind", "")
+                if kind == "slab":
+                    ox, oy, oz = float(meta.get("OriginX", 0)), float(meta.get("OriginY", 0)), float(meta.get("OriginZ", 0))
+                    length = float(meta.get("Length", 0))
+                    width = float(meta.get("Width", 0))
+                    thickness = float(meta.get("Thickness", 0))
+                    xs.extend([ox, ox + length])
+                    ys.extend([oy, oy + width])
+                    zs.extend([oz, oz + thickness])
+                elif kind == "wall":
+                    sx, sy = float(meta.get("StartX", 0)), float(meta.get("StartY", 0))
+                    ex, ey = float(meta.get("EndX", 0)), float(meta.get("EndY", 0))
+                    bz = float(meta.get("BaseZ", 0))
+                    h = float(meta.get("Height", 0))
+                    xs.extend([sx, ex])
+                    ys.extend([sy, ey])
+                    zs.extend([bz, bz + h])
+                elif kind == "column":
+                    cx, cy = float(meta.get("OriginX", 0)), float(meta.get("OriginY", 0))
+                    bz = float(meta.get("BaseZ", 0))
+                    h = float(meta.get("Height", 0))
+                    w = float(meta.get("Width", 0))
+                    d = float(meta.get("Depth", 0))
+                    xs.extend([cx - w / 2, cx + w / 2])
+                    ys.extend([cy - d / 2, cy + d / 2])
+                    zs.extend([bz, bz + h])
+                elif kind == "beam":
+                    sx, sy = float(meta.get("StartX", 0)), float(meta.get("StartY", 0))
+                    ex, ey = float(meta.get("EndX", 0)), float(meta.get("EndY", 0))
+                    bz = float(meta.get("BaseZ", 0))
+                    xs.extend([sx, ex])
+                    ys.extend([sy, ey])
+                    zs.append(bz)
+                elif kind == "footing":
+                    ox, oy = float(meta.get("OriginX", 0)), float(meta.get("OriginY", 0))
+                    bz = float(meta.get("BaseZ", 0))
+                    length = float(meta.get("Length", 0))
+                    width = float(meta.get("Width", 0))
+                    thickness = float(meta.get("Thickness", 0))
+                    xs.extend([ox, ox + length])
+                    ys.extend([oy, oy + width])
+                    zs.extend([bz, bz + thickness])
+                else:
+                    # Fallback: use placement origin if available
+                    ox = meta.get("OriginX")
+                    oy = meta.get("OriginY")
+                    oz = meta.get("OriginZ") or meta.get("BaseZ")
+                    if ox is not None:
+                        xs.append(float(ox))
+                    if oy is not None:
+                        ys.append(float(oy))
+                    if oz is not None:
+                        zs.append(float(oz))
+        if not xs or not ys or not zs:
+            return None
+        return (min(xs), max(xs), min(ys), max(ys), min(zs), max(zs))
 
     def debug_dump(self) -> str:
         return json.dumps(

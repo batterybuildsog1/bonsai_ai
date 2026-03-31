@@ -16,8 +16,12 @@ Return JSON matching the provided schema. Use metric units (meters).
 ## Element Placement
 
 - Slab and panel x/y is the bottom-left corner. Column x/y is the center.
+- For slabs: length is the X-axis extent, width is the Y-axis extent. A 40m x 25m building at origin (0,0) has length=40, width=25.
 - Element base_z should match its assigned storey elevation.
 - When generators share a footprint, use the same origin coordinates.
+- Column grids must span the full building footprint. If the building is 25m wide and bays are 8m, use 4 bays (0, 8, 16, 25) not 3 bays (0, 8, 16, 24).
+- Place beams at every column-to-column gridline on each floor (both X and Y directions).
+- Include a roof slab at the top of the building (above the highest storey).
 - Prefer a small number of clear actions over many micro-actions.
 
 ## Generators (prefer these for regular patterns)

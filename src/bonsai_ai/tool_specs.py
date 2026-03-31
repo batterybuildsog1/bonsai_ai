@@ -75,8 +75,8 @@ TOOL_SPECS: List[ToolSpec] = [
                     "x": _number("Bottom-left corner origin X in meters (NOT center). The slab extends from (x, y) to (x+length, y+width)."),
                     "y": _number("Bottom-left corner origin Y in meters (NOT center). The slab extends from (x, y) to (x+length, y+width)."),
                     "z": _number("Base elevation in meters."),
-                    "length": _number("Slab length along X axis in meters."),
-                    "width": _number("Slab width along Y axis in meters."),
+                    "length": _number("Slab extent along the X axis in meters (east-west dimension for a north-facing building)."),
+                    "width": _number("Slab extent along the Y axis in meters (north-south dimension)."),
                     "thickness": _number("Slab thickness in meters."),
                     "rotation_deg": _number("Optional rotation around Z in degrees."),
                 }
