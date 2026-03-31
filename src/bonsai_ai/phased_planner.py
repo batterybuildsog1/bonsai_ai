@@ -372,6 +372,16 @@ def _build_execution_prompt(
     parts.append(
         "Other phases handle other element types. Do not duplicate existing elements."
     )
+
+    # Phase-specific constraints
+    if phase["name"] == "openings":
+        parts.append(
+            "\nIMPORTANT: Windows can only be hosted in walls created by create_wall "
+            "(IfcWall), NOT in curtain walls (IfcCurtainWall). The wall_name must "
+            "reference an existing IfcWall. If a facade is a curtain wall, do NOT "
+            "place windows on that facade — skip those windows entirely."
+        )
+
     parts.append("\nRespond with ONLY the JSON. No markdown, no commentary.")
 
     return "\n".join(parts)
@@ -402,6 +412,46 @@ _FIELD_ALIASES = {
 }
 
 
+_NUMERIC_FIELDS = frozenset({
+    "depth", "width", "height", "thickness", "length",
+    "x", "y", "z", "x1", "y1", "x2", "y2",
+    "base_z", "elevation",
+    "offset_along_wall", "sill_height",
+    "spacing_x", "spacing_y",
+    "grid_origin_x", "grid_origin_y",
+    "column_width", "column_depth", "column_height",
+    "beam_width", "beam_depth",
+    "center_x", "center_y",
+    "tread_depth", "riser_height", "step_count",
+    "rotation_deg", "direction_deg",
+    "bays_x", "bays_y",
+})
+
+
+def _coerce_numeric(value: object) -> object:
+    """Try to coerce a value to a number.
+
+    Handles strings like "0.5m", "200mm", "3.0", and None -> 0.0.
+    Returns the original value if coercion fails.
+    """
+    if isinstance(value, (int, float)):
+        return value
+    if value is None:
+        return 0.0
+    if isinstance(value, str):
+        # Strip common unit suffixes
+        cleaned = value.strip().lower()
+        for suffix in ("mm", "m", "cm", "in", "ft", "'", '"'):
+            if cleaned.endswith(suffix):
+                cleaned = cleaned[: -len(suffix)].strip()
+                break
+        try:
+            return float(cleaned)
+        except (ValueError, TypeError):
+            pass
+    return value
+
+
 def _normalize_actions(actions: List[Dict[str, Any]]) -> None:
     """Normalize action types and field names in-place so the compiler accepts them.
 
@@ -409,6 +459,7 @@ def _normalize_actions(actions: List[Dict[str, Any]]) -> None:
     - create_rectangular_slab -> create_rect_slab
     - beam with x/y instead of x1/y1/x2/y2
     - storey instead of storey_name
+    - non-numeric dimension fields ("0.5m" -> 0.5)
     """
     for action in actions:
         # Normalize type
@@ -420,6 +471,11 @@ def _normalize_actions(actions: List[Dict[str, Any]]) -> None:
         for old_key, new_key in _FIELD_ALIASES.items():
             if old_key in action and new_key not in action:
                 action[new_key] = action.pop(old_key)
+
+        # Coerce numeric fields — strip unit suffixes, convert strings to float
+        for field_name in _NUMERIC_FIELDS:
+            if field_name in action:
+                action[field_name] = _coerce_numeric(action[field_name])
 
         # Special case: beams with x/y need conversion to x1/y1/x2/y2
         if action.get("type") == "create_beam":
@@ -485,6 +541,14 @@ def _execute_phase(
 
     if not authored_plan["actions"]:
         elapsed = time.time() - t0
+        # If storeys already exist in the model, a no-op storeys phase is OK
+        if phase_name == "storeys" and author.model.by_type("IfcBuildingStorey"):
+            return _PhaseResult(
+                phase_name=phase_name,
+                action_count=0,
+                elapsed_seconds=elapsed,
+                errors=[],  # not an error — storeys already present
+            )
         return _PhaseResult(
             phase_name=phase_name,
             action_count=0,

@@ -33,12 +33,89 @@ const elementIndex = new Map(); // expressID -> element info
 
 // --- Selection ---
 let selectedMesh = null;
+let selectionOutline = null; // wireframe overlay for selection highlight
 const selectionMaterial = new THREE.MeshStandardMaterial({
-  color: 0x74dbff,
+  color: 0x00ffff,
+  emissive: 0x00ffff,
+  emissiveIntensity: 0.35,
   transparent: true,
-  opacity: 0.7,
+  opacity: 0.75,
   depthTest: true,
+  roughness: 0.3,
+  metalness: 0.0,
 });
+const selectionWireMaterial = new THREE.MeshBasicMaterial({
+  color: 0x00ffff,
+  wireframe: true,
+  transparent: true,
+  opacity: 0.4,
+});
+
+// --- IFC-type material palette (created once, reused for every mesh) ---
+const TYPE_MATERIALS = {};
+
+function getTypeMaterial(ifcType) {
+  if (TYPE_MATERIALS[ifcType]) return TYPE_MATERIALS[ifcType];
+
+  // Normalize: strip "Ifc" prefix and "StandardCase" suffix for matching
+  const key = (ifcType || "")
+    .replace(/^Ifc/i, "")
+    .replace(/StandardCase$/i, "")
+    .toLowerCase();
+
+  let color, opacity = 1.0, roughness = 0.65, metalness = 0.05, side = THREE.FrontSide;
+
+  switch (key) {
+    case "slab":
+    case "slabelementedcase":
+      color = 0x8c8c8c; roughness = 0.85; break;
+    case "wall":
+      color = 0xa0a0a0; roughness = 0.80; break;
+    case "column":
+      color = 0x4a6fa5; roughness = 0.45; metalness = 0.25; break;
+    case "beam":
+      color = 0x4a6fa5; roughness = 0.45; metalness = 0.25; break;
+    case "curtainwall":
+    case "plate":
+      color = 0x7cb5c9; opacity = 0.30; roughness = 0.1; metalness = 0.1;
+      side = THREE.DoubleSide; break;
+    case "door":
+      color = 0x8b6914; roughness = 0.75; break;
+    case "window":
+      color = 0xa8d8ea; opacity = 0.50; roughness = 0.05; metalness = 0.1;
+      side = THREE.DoubleSide; break;
+    case "footing":
+    case "pile":
+      color = 0x666666; roughness = 0.90; break;
+    case "roof":
+      color = 0x7a5c4f; roughness = 0.80; break;
+    case "stair":
+    case "stairflight":
+      color = 0x9e9e9e; roughness = 0.70; break;
+    case "railing":
+      color = 0x6e6e6e; roughness = 0.40; metalness = 0.35; break;
+    case "member":
+      color = 0x5a7a9a; roughness = 0.50; metalness = 0.20; break;
+    case "space":
+      color = 0x74dbff; opacity = 0.08; roughness = 0.1;
+      side = THREE.DoubleSide; break;
+    default:
+      color = 0x999999; roughness = 0.70; break;
+  }
+
+  const mat = new THREE.MeshStandardMaterial({
+    color,
+    transparent: opacity < 1.0,
+    opacity,
+    side,
+    depthWrite: opacity >= 1.0,
+    roughness,
+    metalness,
+  });
+
+  TYPE_MATERIALS[ifcType] = mat;
+  return mat;
+}
 
 // --- Performance timings ---
 const timings = {};
@@ -60,19 +137,56 @@ export async function setupScene() {
   const container = rootEl.querySelector("[data-viewport]");
   if (!container) throw new Error("No viewport container found");
 
-  // --- Three.js scene (identical to legacy viewer) ---
+  // --- Three.js scene ---
   scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x0a0e14);
+
+  // Gradient background via vertex-colored fullscreen plane (dark bottom, lighter top)
+  // Using a large background sphere for the gradient effect
+  {
+    const bgGeo = new THREE.SphereGeometry(400, 32, 32);
+    const bgMat = new THREE.ShaderMaterial({
+      side: THREE.BackSide,
+      depthWrite: false,
+      uniforms: {
+        topColor: { value: new THREE.Color(0x0f1923) },
+        bottomColor: { value: new THREE.Color(0x060a0f) },
+      },
+      vertexShader: `
+        varying vec3 vWorldPos;
+        void main() {
+          vec4 worldPos = modelMatrix * vec4(position, 1.0);
+          vWorldPos = worldPos.xyz;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform vec3 topColor;
+        uniform vec3 bottomColor;
+        varying vec3 vWorldPos;
+        void main() {
+          float h = normalize(vWorldPos).y;
+          float t = clamp(h * 0.5 + 0.5, 0.0, 1.0);
+          gl_FragColor = vec4(mix(bottomColor, topColor, t), 1.0);
+        }
+      `,
+    });
+    const bgMesh = new THREE.Mesh(bgGeo, bgMat);
+    bgMesh.renderOrder = -1;
+    scene.add(bgMesh);
+  }
 
   const aspect = container.clientWidth / container.clientHeight;
   camera = new THREE.PerspectiveCamera(45, aspect, 0.1, 1000);
-  camera.position.set(20, 15, 20);
+  camera.position.set(30, 25, 30);
 
-  renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
   renderer.setSize(container.clientWidth, container.clientHeight);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.0;
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
   container.appendChild(renderer.domElement);
 
   controls = new OrbitControls(camera, renderer.domElement);
@@ -82,22 +196,49 @@ export async function setupScene() {
   controls.minDistance = 1;
   controls.maxDistance = 500;
 
-  // Lighting
-  scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+  // --- Lighting rig ---
+  // Soft ambient fill
+  scene.add(new THREE.AmbientLight(0xffffff, 0.4));
 
-  const dir1 = new THREE.DirectionalLight(0xffffff, 1.0);
-  dir1.position.set(50, 80, 50);
-  dir1.castShadow = true;
-  scene.add(dir1);
+  // Primary directional (sun-like key light) with shadows
+  const sunLight = new THREE.DirectionalLight(0xfff5e6, 0.9);
+  sunLight.position.set(50, 80, 60);
+  sunLight.castShadow = true;
+  sunLight.shadow.mapSize.width = 2048;
+  sunLight.shadow.mapSize.height = 2048;
+  sunLight.shadow.camera.near = 0.5;
+  sunLight.shadow.camera.far = 300;
+  sunLight.shadow.camera.left = -80;
+  sunLight.shadow.camera.right = 80;
+  sunLight.shadow.camera.top = 80;
+  sunLight.shadow.camera.bottom = -80;
+  sunLight.shadow.bias = -0.0005;
+  sunLight.shadow.normalBias = 0.02;
+  scene.add(sunLight);
 
-  const dir2 = new THREE.DirectionalLight(0xffffff, 0.3);
-  dir2.position.set(-30, 40, -30);
-  scene.add(dir2);
+  // Secondary fill light (cooler, from opposite side)
+  const fillLight = new THREE.DirectionalLight(0xd6eaff, 0.35);
+  fillLight.position.set(-30, 40, -30);
+  scene.add(fillLight);
 
-  scene.add(new THREE.HemisphereLight(0xb1e1ff, 0x444444, 0.4));
+  // Hemisphere light (sky blue from above, warm earth bounce from below)
+  scene.add(new THREE.HemisphereLight(0xb1e1ff, 0xb97a20, 0.3));
 
-  // Grid
-  const grid = new THREE.GridHelper(100, 100, 0x1a2a3a, 0x0d1a28);
+  // --- Ground plane (shadow-receiving) ---
+  {
+    const groundGeo = new THREE.PlaneGeometry(400, 400);
+    const groundMat = new THREE.ShadowMaterial({ opacity: 0.18 });
+    const ground = new THREE.Mesh(groundGeo, groundMat);
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.y = -0.01; // slightly below origin to avoid z-fighting
+    ground.receiveShadow = true;
+    scene.add(ground);
+  }
+
+  // Grid helper for scale reference
+  const grid = new THREE.GridHelper(200, 80, 0x1a2a3a, 0x0f1820);
+  grid.material.transparent = true;
+  grid.material.opacity = 0.35;
   scene.add(grid);
 
   // Resize
@@ -181,6 +322,13 @@ function selectElement(expressId, mesh) {
     mesh.userData.originalMaterial = mesh.material;
     mesh.material = selectionMaterial;
     selectedMesh = mesh;
+
+    // Add wireframe outline overlay for extra visibility
+    selectionOutline = new THREE.Mesh(mesh.geometry, selectionWireMaterial);
+    selectionOutline.position.copy(mesh.position);
+    selectionOutline.rotation.copy(mesh.rotation);
+    selectionOutline.scale.copy(mesh.scale).multiplyScalar(1.002); // slight scale-up to avoid z-fighting
+    mesh.parent?.add(selectionOutline);
   }
 
   // Build element info — use on-demand property extraction from IFC-Lite
@@ -293,6 +441,11 @@ export function clearSelection() {
     selectedMesh.material = selectedMesh.userData.originalMaterial;
     delete selectedMesh.userData.originalMaterial;
     selectedMesh = null;
+  }
+  if (selectionOutline) {
+    selectionOutline.parent?.remove(selectionOutline);
+    selectionOutline.geometry = null; // shared geometry, don't dispose
+    selectionOutline = null;
   }
 }
 
@@ -409,6 +562,10 @@ export async function loadIFC(url) {
 /**
  * Convert IFC-Lite MeshData to a Three.js Mesh.
  * MeshData: { expressId, positions: Float32Array, normals: Float32Array, indices: Uint32Array, color: [r,g,b,a] }
+ *
+ * Material assignment strategy:
+ * 1. Look up the IFC entity type from the dataStore and use the type-based material palette.
+ * 2. If the type is unknown or generic, fall back to the embedded color from IFC-Lite.
  */
 function meshDataToThreeMesh(meshData) {
   const geometry = new THREE.BufferGeometry();
@@ -416,22 +573,40 @@ function meshDataToThreeMesh(meshData) {
   geometry.setAttribute("position", new THREE.BufferAttribute(meshData.positions, 3));
   geometry.setAttribute("normal", new THREE.BufferAttribute(meshData.normals, 3));
   geometry.setIndex(new THREE.BufferAttribute(meshData.indices, 1));
+  geometry.computeBoundingBox();
 
-  const [r, g, b, a] = meshData.color;
-  const material = new THREE.MeshStandardMaterial({
-    color: new THREE.Color(r, g, b),
-    transparent: a < 1.0,
-    opacity: a,
-    side: a < 1.0 ? THREE.DoubleSide : THREE.FrontSide,
-    depthWrite: a >= 1.0,
-    roughness: 0.6,
-    metalness: 0.1,
-  });
+  // Resolve IFC type for material assignment
+  let ifcType = null;
+  if (dataStore && dataStore.entityIndex?.byId) {
+    const entityRef = dataStore.entityIndex.byId.get(meshData.expressId);
+    if (entityRef?.type) {
+      ifcType = entityRef.type.replace(/^IFC/, "Ifc");
+    }
+  }
+
+  let material;
+  if (ifcType && ifcType !== "IfcBuildingElement" && ifcType !== "IfcProduct") {
+    // Use type-based material palette
+    material = getTypeMaterial(ifcType);
+  } else {
+    // Fallback: use embedded color from IFC-Lite geometry output
+    const [r, g, b, a] = meshData.color;
+    material = new THREE.MeshStandardMaterial({
+      color: new THREE.Color(r, g, b),
+      transparent: a < 1.0,
+      opacity: a,
+      side: a < 1.0 ? THREE.DoubleSide : THREE.FrontSide,
+      depthWrite: a >= 1.0,
+      roughness: 0.65,
+      metalness: 0.05,
+    });
+  }
 
   const mesh = new THREE.Mesh(geometry, material);
   mesh.userData.expressId = meshData.expressId;
   // Also set expressID for backward compat with legacy inspector/app code
   mesh.userData.expressID = meshData.expressId;
+  mesh.userData.ifcType = ifcType;
   mesh.receiveShadow = true;
   mesh.castShadow = true;
 
@@ -527,7 +702,7 @@ function fitAll() {
   });
 
   if (box.isEmpty()) {
-    camera.position.set(20, 15, 20);
+    camera.position.set(30, 25, 30);
     camera.lookAt(0, 0, 0);
     controls.target.set(0, 0, 0);
     return;
@@ -537,15 +712,45 @@ function fitAll() {
   const size = box.getSize(new THREE.Vector3());
   const maxDim = Math.max(size.x, size.y, size.z);
   const fov = camera.fov * (Math.PI / 180);
-  const dist = maxDim / (2 * Math.tan(fov / 2)) * 1.5;
+  const dist = maxDim / (2 * Math.tan(fov / 2)) * 1.6;
 
+  // 3/4 view: camera positioned to front-right, looking slightly down
   camera.position.copy(center);
-  camera.position.x += dist * 0.6;
-  camera.position.y += dist * 0.5;
-  camera.position.z += dist * 0.6;
+  camera.position.x += dist * 0.65;
+  camera.position.y += dist * 0.45;
+  camera.position.z += dist * 0.55;
 
+  // Point controls target slightly below center for a more architectural perspective
   controls.target.copy(center);
+  controls.target.y -= size.y * 0.05;
   controls.update();
+
+  // Adjust the shadow camera to cover the model
+  scene.traverse((child) => {
+    if (child.isDirectionalLight && child.castShadow) {
+      const pad = maxDim * 0.8;
+      child.shadow.camera.left = -pad;
+      child.shadow.camera.right = pad;
+      child.shadow.camera.top = pad;
+      child.shadow.camera.bottom = -pad;
+      child.shadow.camera.far = maxDim * 4;
+      child.target.position.copy(center);
+      child.shadow.camera.updateProjectionMatrix();
+    }
+  });
+
+  // Move ground plane and grid to the model's base
+  const baseY = box.min.y - 0.01;
+  scene.traverse((child) => {
+    if (child.isMesh && child.material?.isShadowMaterial) {
+      child.position.y = baseY;
+    }
+    if (child.isGridHelper) {
+      child.position.y = baseY;
+      child.position.x = center.x;
+      child.position.z = center.z;
+    }
+  });
 }
 
 let wireframeMode = false;
