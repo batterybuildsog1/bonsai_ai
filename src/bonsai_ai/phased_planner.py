@@ -376,10 +376,12 @@ def _build_execution_prompt(
     # Phase-specific constraints
     if phase["name"] == "openings":
         parts.append(
-            "\nIMPORTANT: Windows can only be hosted in walls created by create_wall "
-            "(IfcWall), NOT in curtain walls (IfcCurtainWall). The wall_name must "
-            "reference an existing IfcWall. If a facade is a curtain wall, do NOT "
-            "place windows on that facade — skip those windows entirely."
+            "\nIMPORTANT: Windows and doors can only be hosted in walls created by "
+            "create_wall (IfcWall), NOT in curtain walls (IfcCurtainWall). The "
+            "wall_name must reference an existing IfcWall from the scene summary. "
+            "If a facade is a curtain wall, do NOT place windows or doors on that "
+            "facade — skip those openings entirely. Only create openings for walls "
+            "that appear as IfcWall in the scene summary above."
         )
 
     parts.append("\nRespond with ONLY the JSON. No markdown, no commentary.")
@@ -402,9 +404,15 @@ _TYPE_ALIASES = {
     "ensure_project": "ensure_storey",  # if project, let storey handle it
 }
 
-# Field aliases the LLM may use
+# Field aliases the LLM may use (applied to all action types)
 _FIELD_ALIASES = {
     "storey": "storey_name",
+}
+
+# Field aliases for beam actions only — beams use x1/y1/x2/y2 but LLMs
+# sometimes write start_x/start_y.  Do NOT apply globally because
+# generate_facade_grid legitimately uses start_x/start_y/end_x/end_y.
+_BEAM_FIELD_ALIASES = {
     "start_x": "x1",
     "start_y": "y1",
     "end_x": "x2",
@@ -415,7 +423,9 @@ _FIELD_ALIASES = {
 _NUMERIC_FIELDS = frozenset({
     "depth", "width", "height", "thickness", "length",
     "x", "y", "z", "x1", "y1", "x2", "y2",
-    "base_z", "elevation",
+    "dx", "dy", "dz",
+    "base_z", "top_z", "end_z", "elevation",
+    "start_x", "start_y", "end_x", "end_y",
     "offset_along_wall", "sill_height",
     "spacing_x", "spacing_y",
     "grid_origin_x", "grid_origin_y",
@@ -423,21 +433,22 @@ _NUMERIC_FIELDS = frozenset({
     "beam_width", "beam_depth",
     "center_x", "center_y",
     "tread_depth", "riser_height", "step_count",
-    "rotation_deg", "direction_deg",
+    "rotation_deg", "rotation_degrees", "direction_deg",
     "bays_x", "bays_y",
+    "panel_width", "panel_height", "panel_gap", "panel_thickness",
 })
 
 
 def _coerce_numeric(value: object) -> object:
     """Try to coerce a value to a number.
 
-    Handles strings like "0.5m", "200mm", "3.0", and None -> 0.0.
-    Returns the original value if coercion fails.
+    Handles strings like "0.5m", "200mm", "3.0".
+    Returns the original value unchanged if coercion fails (including None).
     """
     if isinstance(value, (int, float)):
         return value
     if value is None:
-        return 0.0
+        return value  # leave None — caller handles missing fields
     if isinstance(value, str):
         # Strip common unit suffixes
         cleaned = value.strip().lower()
@@ -467,30 +478,30 @@ def _normalize_actions(actions: List[Dict[str, Any]]) -> None:
         if atype in _TYPE_ALIASES:
             action["type"] = _TYPE_ALIASES[atype]
 
-        # Normalize field names
+        # Normalize field names (global aliases)
         for old_key, new_key in _FIELD_ALIASES.items():
             if old_key in action and new_key not in action:
                 action[new_key] = action.pop(old_key)
+
+        # Beam-specific field aliases (start_x -> x1, etc.)
+        if action.get("type") == "create_beam":
+            for old_key, new_key in _BEAM_FIELD_ALIASES.items():
+                if old_key in action and new_key not in action:
+                    action[new_key] = action.pop(old_key)
 
         # Coerce numeric fields — strip unit suffixes, convert strings to float
         for field_name in _NUMERIC_FIELDS:
             if field_name in action:
                 action[field_name] = _coerce_numeric(action[field_name])
 
-        # Special case: beams with x/y need conversion to x1/y1/x2/y2
-        if action.get("type") == "create_beam":
-            if "x" in action and "x1" not in action:
-                # Single-point beam → can't fix, but set x1=x, y1=y
-                # The planner should have provided start/end points
+        # For slabs/columns: if 'depth' is missing/zero but 'length' is set,
+        # use length as depth (LLMs confuse width/depth/length).
+        if action.get("type") in ("create_rect_slab", "create_rectangular_slab"):
+            if (not action.get("depth")) and action.get("length"):
+                action["depth"] = action.pop("length")
+            elif (not action.get("depth")) and action.get("width"):
+                # depth is truly missing; cannot infer
                 pass
-            if "start_x" in action and "x1" not in action:
-                action["x1"] = action.pop("start_x")
-            if "start_y" in action and "y1" not in action:
-                action["y1"] = action.pop("start_y")
-            if "end_x" in action and "x2" not in action:
-                action["x2"] = action.pop("end_x")
-            if "end_y" in action and "y2" not in action:
-                action["y2"] = action.pop("end_y")
 
 
 @dataclass
@@ -549,6 +560,14 @@ def _execute_phase(
                 elapsed_seconds=elapsed,
                 errors=[],  # not an error — storeys already present
             )
+        # If openings phase finds no walls to host windows/doors, that's OK
+        if phase_name == "openings" and not author.model.by_type("IfcWall"):
+            return _PhaseResult(
+                phase_name=phase_name,
+                action_count=0,
+                elapsed_seconds=elapsed,
+                errors=[],  # not an error — no walls to host openings
+            )
         return _PhaseResult(
             phase_name=phase_name,
             action_count=0,
@@ -560,13 +579,49 @@ def _execute_phase(
     try:
         compiled_plan = compile_core_plan(authored_plan)
     except Exception as exc:
-        elapsed = time.time() - t0
-        return _PhaseResult(
-            phase_name=phase_name,
-            action_count=0,
-            elapsed_seconds=elapsed,
-            errors=[f"Compilation failed: {exc}"],
-        )
+        err_msg = str(exc)
+        # If compilation failed due to non-numeric fields, dump the offending
+        # action for diagnostics and try a second normalization pass.
+        if "must be numeric" in err_msg or "must be greater than zero" in err_msg:
+            import re as _re
+            m = _re.search(r"Action (\d+) field '(\w+)'", err_msg)
+            if m:
+                bad_idx, bad_field = int(m.group(1)), m.group(2)
+                actions = authored_plan.get("actions", [])
+                if bad_idx < len(actions):
+                    bad_action = actions[bad_idx]
+                    bad_val = bad_action.get(bad_field)
+                    # Force-fix: coerce to numeric, fallback to 0.0
+                    coerced = _coerce_numeric(bad_val)
+                    if not isinstance(coerced, (int, float)):
+                        coerced = 0.0
+                    # For dimension fields that cannot be zero, try to
+                    # borrow from a sibling field (length <-> depth).
+                    if coerced == 0.0 and bad_field in ("depth", "width", "length"):
+                        for alt in ("length", "depth", "width"):
+                            if alt != bad_field and isinstance(bad_action.get(alt), (int, float)) and bad_action[alt] > 0:
+                                coerced = bad_action[alt]
+                                break
+                    bad_action[bad_field] = coerced
+            # Retry compilation after the fix
+            try:
+                compiled_plan = compile_core_plan(authored_plan)
+            except Exception as exc2:
+                elapsed = time.time() - t0
+                return _PhaseResult(
+                    phase_name=phase_name,
+                    action_count=0,
+                    elapsed_seconds=elapsed,
+                    errors=[f"Compilation failed: {exc2}"],
+                )
+        else:
+            elapsed = time.time() - t0
+            return _PhaseResult(
+                phase_name=phase_name,
+                action_count=0,
+                elapsed_seconds=elapsed,
+                errors=[f"Compilation failed: {exc}"],
+            )
 
     # Convert to PlannedToolCall objects
     tool_calls = [
