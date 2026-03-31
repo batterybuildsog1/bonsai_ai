@@ -47,6 +47,8 @@ Rules:
 - If the prompt asks for unsupported element types, mention the simplification in assumptions and approximate with the supported primitives.
 - Give every action a stable, descriptive name.
 - Use absolute coordinates in world space.
+- COORDINATE CONVENTION: For slabs and panels, x/y is the BOTTOM-LEFT CORNER ORIGIN (not center). A slab at x=0, y=0 with length=40, width=25 spans from (0,0) to (40,25). For columns, x/y IS the center point. Match column grid origins with slab origins.
+- WALL vs CURTAIN WALL: If the design needs windows or doors on a facade, that facade MUST use create_wall (IfcWall), NOT create_curtain_wall. Windows and doors can only be hosted in IfcWall. Use curtain walls only for fully glazed facades without individual openings.
 """
 
 

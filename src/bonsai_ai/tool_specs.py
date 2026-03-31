@@ -72,11 +72,11 @@ TOOL_SPECS: List[ToolSpec] = [
                 {
                     "name": _string("Element name."),
                     "storey_name": _string("Storey that contains the slab."),
-                    "x": _number("Local origin X in meters."),
-                    "y": _number("Local origin Y in meters."),
+                    "x": _number("Bottom-left corner origin X in meters (NOT center). The slab extends from (x, y) to (x+length, y+width)."),
+                    "y": _number("Bottom-left corner origin Y in meters (NOT center). The slab extends from (x, y) to (x+length, y+width)."),
                     "z": _number("Base elevation in meters."),
-                    "length": _number("Slab length in meters."),
-                    "width": _number("Slab width in meters."),
+                    "length": _number("Slab length along X axis in meters."),
+                    "width": _number("Slab width along Y axis in meters."),
                     "thickness": _number("Slab thickness in meters."),
                     "rotation_deg": _number("Optional rotation around Z in degrees."),
                 }
@@ -116,8 +116,8 @@ TOOL_SPECS: List[ToolSpec] = [
                 {
                     "name": _string("Column name."),
                     "storey_name": _string("Storey that contains the column."),
-                    "x": _number("Column origin X in meters."),
-                    "y": _number("Column origin Y in meters."),
+                    "x": _number("Column center X in meters (column is centered on this point)."),
+                    "y": _number("Column center Y in meters (column is centered on this point)."),
                     "base_z": _number("Column base Z in meters."),
                     "width": _number("Column width in meters."),
                     "depth": _number("Column depth in meters."),
