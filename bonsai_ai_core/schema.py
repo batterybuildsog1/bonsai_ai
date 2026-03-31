@@ -259,6 +259,15 @@ def _coerce_numeric_fields(action: Dict[str, Any]) -> None:
         action["base_z"] = action.get("z")
     if action_type == "create_rect_slab" and "z" not in action and "elevation" in action:
         action["z"] = action.get("elevation")
+    if action_type == "create_rect_slab":
+        # Coerce length/width naming to canonical width/depth fields.
+        # The LLM may use "length" (X-axis) and "width" (Y-axis) but the
+        # schema expects "width" (X-axis) and "depth" (Y-axis).
+        if "width" not in action and "length" in action:
+            action["width"] = action.pop("length")
+        elif "length" in action and "depth" not in action:
+            action["depth"] = action.get("width")
+            action["width"] = action.pop("length")
     if action_type in {"create_panel", "create_stair_landing", "create_connection_plate", "create_footing"} and "base_z" not in action:
         if "z" in action:
             action["base_z"] = action.get("z")
