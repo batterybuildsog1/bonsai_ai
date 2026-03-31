@@ -35,7 +35,7 @@ from .tool_registry import get_tool_summary_for_phase, get_tool_summary_for_phas
 # Locate the openclaw binary
 # ---------------------------------------------------------------------------
 
-_OPENCLAW_TIMEOUT = 300  # seconds — complex buildings need more time
+_OPENCLAW_TIMEOUT = 1200  # 20 minutes — quality over speed, let models work iteratively
 
 
 def _find_openclaw() -> Optional[str]:

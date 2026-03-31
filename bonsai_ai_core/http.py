@@ -13,7 +13,7 @@ def post_json(
     url: str,
     payload: Dict[str, Any],
     headers: Dict[str, str],
-    timeout: int = 120,
+    timeout: int = 600,  # 10 minutes — complex buildings need time, quality over speed
 ) -> Dict[str, Any]:
     data = json.dumps(payload).encode("utf-8")
     req = request.Request(url, data=data, headers=headers, method="POST")

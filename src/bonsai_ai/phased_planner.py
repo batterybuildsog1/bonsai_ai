@@ -36,8 +36,8 @@ from .planner import PlannerError, PlanResult, PlannedToolCall, _to_tool_call
 # Constants
 # ---------------------------------------------------------------------------
 
-_PHASE_TIMEOUT = 180  # seconds per phase — single phase should be fast
-_PLAN_TIMEOUT = 120   # seconds for the high-level decomposition
+_PHASE_TIMEOUT = 1200  # 20 minutes per phase — quality over speed
+_PLAN_TIMEOUT = 600    # 10 minutes for decomposition
 
 # Action types allowed per phase category.  Used to build the constraint
 # instruction in each per-phase prompt.
