@@ -32,6 +32,7 @@ class ArtifactKind(str, Enum):
     DESIGN_BRIEF = "design_brief"
     DESIGN_PACKAGE = "design_package"
     BIM_PLAN = "bim_plan"
+    SEMANTIC_MODEL = "semantic_model"
     PHYSICAL_IFC = "physical_ifc"
     STRUCTURAL_SOURCE_MODEL = "structural_source_model"
     ANALYTICAL_MODEL = "analytical_model"
@@ -61,6 +62,7 @@ class ArtifactFormat(str, Enum):
 class ArtifactRole(str, Enum):
     MANIFEST = "manifest"
     BIM_PLAN = "bim_plan"
+    SEMANTIC_MODEL = "semantic_model"
     PRIMARY_IFC = "primary_ifc"
     STRUCTURAL_SOURCE_MODEL = "structural_source_model"
     ANALYSIS_MODEL = "analysis_model"

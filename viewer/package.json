@@ -1,0 +1,20 @@
+{
+  "name": "bonsai-viewer",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 5173",
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1 --port 5173",
+    "proxy": "node src/chat-proxy.js",
+    "postinstall": "cp node_modules/web-ifc/web-ifc.wasm public/"
+  },
+  "dependencies": {
+    "three": "^0.183.0",
+    "web-ifc": "^0.0.77",
+    "marked": "^15.0.0"
+  },
+  "devDependencies": {
+    "vite": "^7.3.1"
+  }
+}

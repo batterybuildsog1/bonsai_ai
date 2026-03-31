@@ -104,6 +104,11 @@ The targeted provider test passed, the Blender addon/core sources compiled, and 
 
 ## Docs references
 
+Implementation tracking:
+
+- [docs/DEEP_REFACTOR_ARCHITECTURE.md](/Users/alanknudson/Applications/Bonsai_ai/docs/DEEP_REFACTOR_ARCHITECTURE.md)
+- [docs/OPTION_C_DEEP_CUTOVER_TRACKER.md](/Users/alanknudson/Applications/Bonsai_ai/docs/OPTION_C_DEEP_CUTOVER_TRACKER.md)
+
 The provider/model choices were checked against primary docs current on March 27, 2026:
 
 - [OpenAI API docs](https://platform.openai.com/docs/api-reference/responses)

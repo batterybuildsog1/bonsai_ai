@@ -242,6 +242,7 @@ def _artifact_role(kind: ArtifactKind) -> ArtifactRole:
     mapping = {
         ArtifactKind.DESIGN_PACKAGE: ArtifactRole.MANIFEST,
         ArtifactKind.BIM_PLAN: ArtifactRole.BIM_PLAN,
+        ArtifactKind.SEMANTIC_MODEL: ArtifactRole.SEMANTIC_MODEL,
         ArtifactKind.PHYSICAL_IFC: ArtifactRole.PRIMARY_IFC,
         ArtifactKind.ANALYTICAL_MODEL: ArtifactRole.ANALYSIS_MODEL,
         ArtifactKind.ENGINEERING_MODEL: ArtifactRole.ENGINEERING_MODEL,
@@ -258,6 +259,7 @@ def _artifact_label(kind: ArtifactKind) -> str:
     return {
         ArtifactKind.DESIGN_PACKAGE: "Design Package Manifest",
         ArtifactKind.BIM_PLAN: "Physical Model Plan",
+        ArtifactKind.SEMANTIC_MODEL: "Semantic Building Model",
         ArtifactKind.PHYSICAL_IFC: "Primary IFC",
         ArtifactKind.ANALYTICAL_MODEL: "Analytical Model",
         ArtifactKind.ENGINEERING_MODEL: "Engineering Model",
@@ -270,7 +272,7 @@ def _artifact_label(kind: ArtifactKind) -> str:
 
 
 def _artifact_stage(kind: ArtifactKind) -> str:
-    if kind in {ArtifactKind.PHYSICAL_IFC, ArtifactKind.BIM_PLAN}:
+    if kind in {ArtifactKind.PHYSICAL_IFC, ArtifactKind.BIM_PLAN, ArtifactKind.SEMANTIC_MODEL}:
         return "materializing_ifc"
     if kind in {ArtifactKind.ANALYTICAL_MODEL, ArtifactKind.ENGINEERING_MODEL, ArtifactKind.SOLVER_INPUT, ArtifactKind.SOLVER_RESULT}:
         return "exporting_analysis"

@@ -6,7 +6,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Protocol
 
-from .contracts import ArtifactFormat, ArtifactKind, DesignPackage, PipelineArtifact
+from .contracts import ArtifactFormat, ArtifactKind, ArtifactRole, DesignPackage, PipelineArtifact
 from .ifc_author import ExecutionResult, IfcAuthor
 from .pipeline import PhysicalModelBackend
 
@@ -442,16 +442,36 @@ class IfcPhysicalModelBackend(PhysicalModelBackend):
             package.physical_model.metadata["authored_plan_path"] = str(authored_plan_path)
         if package.physical_model.semantic_model:
             package.physical_model.metadata["semantic_model_path"] = str(semantic_model_path)
-        return [
+        artifacts = [
             PipelineArtifact(
                 kind=ArtifactKind.BIM_PLAN,
                 format=ArtifactFormat.JSON,
                 path=str(plan_path),
+                metadata={"role": ArtifactRole.BIM_PLAN.value, "label": "Compiled Physical Plan", "is_primary": True},
             ),
             PipelineArtifact(
                 kind=ArtifactKind.PHYSICAL_IFC,
                 format=ArtifactFormat.IFC,
                 path=report.output_path,
-                metadata={"created": report.created},
+                metadata={"created": report.created, "role": ArtifactRole.PRIMARY_IFC.value, "label": "Primary IFC", "is_primary": True},
             ),
         ]
+        if package.physical_model.authored_plan:
+            artifacts.append(
+                PipelineArtifact(
+                    kind=ArtifactKind.BIM_PLAN,
+                    format=ArtifactFormat.JSON,
+                    path=str(authored_plan_path),
+                    metadata={"role": ArtifactRole.BIM_PLAN.value, "label": "Authored Physical Plan", "is_primary": False},
+                )
+            )
+        if package.physical_model.semantic_model:
+            artifacts.append(
+                PipelineArtifact(
+                    kind=ArtifactKind.SEMANTIC_MODEL,
+                    format=ArtifactFormat.JSON,
+                    path=str(semantic_model_path),
+                    metadata={"role": ArtifactRole.SEMANTIC_MODEL.value, "label": "Semantic Building Model", "is_primary": False},
+                )
+            )
+        return artifacts

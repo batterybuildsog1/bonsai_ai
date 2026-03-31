@@ -75,40 +75,48 @@ integration.py                      ← scene context, IFC import
 
 | Module | Knowledge File | Last Reviewed |
 |--------|---------------|---------------|
-| cli.py + design_pipeline_cli.py | knowledge/modules/entry-points.md | not yet |
-| planner.py + planner_backends.py | knowledge/modules/planner.md | not yet |
-| ifc_author.py | knowledge/modules/ifc-author.md | not yet |
-| tool_specs.py | knowledge/modules/tool-specs.md | not yet |
-| execution.py + pipeline.py | knowledge/modules/execution.md | not yet |
-| contracts.py | knowledge/modules/contracts.md | not yet |
+| cli.py + design_pipeline_cli.py | knowledge/modules/entry-points.md | 2026-03-31 |
+| planner.py + planner_backends.py | knowledge/modules/planner.md | 2026-03-31 |
+| ifc_author.py | knowledge/modules/ifc-author.md | 2026-03-31 |
+| tool_specs.py | knowledge/modules/tool-specs.md | 2026-03-31 |
+| execution.py + pipeline.py | knowledge/modules/execution.md | 2026-03-31 |
+| contracts.py | knowledge/modules/contracts.md | 2026-03-31 |
 
 ### Catalog and sizing
 
 | Module | Knowledge File | Last Reviewed |
 |--------|---------------|---------------|
-| catalog_selector.py + catalog_resolver.py | knowledge/modules/catalog-system.md | not yet |
-| section_library.py + system_catalog.py | knowledge/modules/section-library.md | not yet |
-| grouped_sizing.py | knowledge/modules/sizing.md | not yet |
-| system_layout.py | knowledge/modules/system-layout.md | not yet |
+| catalog_selector.py + catalog_resolver.py | knowledge/modules/catalog-system.md | 2026-03-31 |
+| section_library.py + system_catalog.py | knowledge/modules/section-library.md | 2026-03-31 |
+| grouped_sizing.py | knowledge/modules/sizing.md | 2026-03-31 |
+| system_layout.py | knowledge/modules/system-layout.md | 2026-03-31 |
 
 ### Structural analysis
 
 | Module | Knowledge File | Last Reviewed |
 |--------|---------------|---------------|
-| structural_source.py | knowledge/modules/structural-source.md | not yet |
-| analysis_exports.py + load_path.py | knowledge/modules/analysis-pipeline.md | not yet |
-| pynite_backend.py + pynite_results.py | knowledge/modules/pynite.md | not yet |
-| footing_selector.py | knowledge/modules/footings.md | not yet |
-| freecad_handoff.py + freecad_runner.py | knowledge/modules/freecad.md | not yet |
-| results_bundle.py | knowledge/modules/results.md | not yet |
+| structural_source.py | knowledge/modules/structural-source.md | 2026-03-31 |
+| analysis_exports.py + load_path.py | knowledge/modules/analysis-pipeline.md | 2026-03-31 |
+| pynite_backend.py + pynite_results.py | knowledge/modules/pynite.md | 2026-03-31 |
+| footing_selector.py | knowledge/modules/footings.md | 2026-03-31 |
+| freecad_handoff.py + freecad_runner.py | knowledge/modules/freecad.md | 2026-03-31 |
+| results_bundle.py | knowledge/modules/results.md | 2026-03-31 |
 
 ### Blender and bridge
 
 | Module | Knowledge File | Last Reviewed |
 |--------|---------------|---------------|
-| bonsai_ai_blender/ (ui, integration, client, runtime) | knowledge/modules/blender-addon.md | not yet |
-| bonsai_ai_core/ (planner, schema, providers, compiler) | knowledge/modules/core-library.md | not yet |
-| bonsai_ai_bridge/ (server, orchestrator, providers) | knowledge/modules/bridge-server.md | not yet |
+| bonsai_ai_blender/ (ui, integration, client, runtime) | knowledge/modules/blender-addon.md | 2026-03-31 |
+| bonsai_ai_core/ (planner, schema, providers, compiler) | knowledge/modules/core-library.md | 2026-03-31 |
+| bonsai_ai_bridge/ (server, orchestrator, providers) | knowledge/modules/bridge-server.md | 2026-03-31 |
+
+## Patterns
+
+| Pattern | Knowledge File | Last Reviewed |
+|---------|---------------|---------------|
+| Provider dispatch (3 AI providers abstracted) | knowledge/patterns/provider-dispatch.md | 2026-03-31 |
+| Tool call flow (prompt -> plan -> compile -> IFC) | knowledge/patterns/tool-call-flow.md | 2026-03-31 |
+| Error recovery (retry, replan, fallback) | knowledge/patterns/error-recovery.md | 2026-03-31 |
 
 ## Relationships
 

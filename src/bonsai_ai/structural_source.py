@@ -28,6 +28,7 @@ class StructuralSourceModelBuilder:
         if not package.physical_model:
             raise ValueError("physical_model must be present before structural source build")
 
+        self._semantic_model_index = self._index_semantic_model(package.physical_model.semantic_model)
         materials: Dict[str, MaterialSpec] = {}
         sections: Dict[str, SectionSpec] = {}
         elements: List[StructuralSourceElement] = []
@@ -62,6 +63,8 @@ class StructuralSourceModelBuilder:
                 "parent_counts": parent_counts,
                 "system_counts": system_counts,
                 "zone_kind_counts": zone_kind_counts,
+                "semantic_model_element_count": len(self._semantic_model_index.get("elements_by_id", {})),
+                "semantic_model_assembly_count": int((package.physical_model.semantic_model or {}).get("metadata", {}).get("assembly_count") or 0),
             },
         )
 
@@ -114,47 +117,98 @@ class StructuralSourceModelBuilder:
         return []
 
     @staticmethod
-    def _semantic_meta(action: Dict[str, Any]) -> Dict[str, Any]:
+    def _index_semantic_model(model: Dict[str, Any] | None) -> Dict[str, Dict[str, Dict[str, Any]]]:
+        elements_by_id: Dict[str, Dict[str, Any]] = {}
+        elements_by_name: Dict[str, Dict[str, Any]] = {}
+        if isinstance(model, dict):
+            for element in model.get("elements") or []:
+                if not isinstance(element, dict):
+                    continue
+                element_id = str(element.get("id") or "").strip()
+                name = str(element.get("name") or "").strip()
+                if element_id:
+                    elements_by_id[element_id] = element
+                if name:
+                    elements_by_name.setdefault(name, element)
+        return {"elements_by_id": elements_by_id, "elements_by_name": elements_by_name}
+
+    def _semantic_record(self, action: Dict[str, Any]) -> Dict[str, Any]:
         semantics = action.get("semantics")
-        if isinstance(semantics, dict):
-            return semantics
+        element_id = str(semantics.get("element_id") or "").strip() if isinstance(semantics, dict) else ""
+        if element_id:
+            record = self._semantic_model_index.get("elements_by_id", {}).get(element_id)
+            if isinstance(record, dict):
+                return record
         return {}
 
-    @classmethod
-    def _semantic_id(cls, action: Dict[str, Any]) -> str:
-        semantics = cls._semantic_meta(action)
-        return str(semantics.get("element_id") or cls._element_id(str(action["name"])))
+    def _semantic_meta(self, action: Dict[str, Any]) -> Dict[str, Any]:
+        semantics = dict(action.get("semantics") or {}) if isinstance(action.get("semantics"), dict) else {}
+        record = self._semantic_record(action)
+        record_action = record.get("action")
+        if isinstance(record_action, dict):
+            record_semantics = record_action.get("semantics")
+            if isinstance(record_semantics, dict):
+                for key, value in record_semantics.items():
+                    semantics.setdefault(key, value)
+        for field in ("parent_id", "assembly_id", "selector_tags"):
+            value = record.get(field)
+            if value is not None and field not in semantics:
+                semantics[field] = value
+        branch_path = record.get("branch_path")
+        if branch_path and "group_path" not in semantics:
+            semantics["group_path"] = list(branch_path)
+        return semantics
 
-    @classmethod
-    def _semantic_parent_id(cls, action: Dict[str, Any], fallback: str | None) -> str | None:
-        semantics = cls._semantic_meta(action)
+    def _semantic_id(self, action: Dict[str, Any]) -> str:
+        semantics = self._semantic_meta(action)
+        return str(semantics.get("element_id") or self._element_id(str(action["name"])))
+
+    def _semantic_parent_id(self, action: Dict[str, Any], fallback: str | None) -> str | None:
+        semantics = self._semantic_meta(action)
         return str(semantics.get("parent_id") or fallback) if (semantics.get("parent_id") or fallback) else None
 
-    @classmethod
-    def _semantic_assembly_id(cls, action: Dict[str, Any], fallback: str | None) -> str | None:
-        semantics = cls._semantic_meta(action)
+    def _semantic_assembly_id(self, action: Dict[str, Any], fallback: str | None) -> str | None:
+        semantics = self._semantic_meta(action)
         return str(semantics.get("assembly_id") or fallback) if (semantics.get("assembly_id") or fallback) else None
 
-    @classmethod
-    def _semantic_system_id(cls, action: Dict[str, Any], structural_family: str, fallback: str) -> str:
-        semantics = cls._semantic_meta(action)
+    def _semantic_system_id(self, action: Dict[str, Any], structural_family: str, fallback: str) -> str:
+        semantics = self._semantic_meta(action)
         system_name = str(semantics.get("system_name") or "").strip()
         if system_name:
-            return f"system:{cls._slug(system_name)}"
+            return f"system:{self._slug(system_name)}"
         return fallback
 
-    @classmethod
-    def _semantic_role_or(cls, action: Dict[str, Any], fallback: str) -> str:
-        semantics = cls._semantic_meta(action)
+    def _semantic_role_or(self, action: Dict[str, Any], fallback: str) -> str:
+        semantics = self._semantic_meta(action)
         return str(semantics.get("role") or fallback)
 
-    @classmethod
-    def _semantic_interface_type(cls, action: Dict[str, Any], role: str, zone_kind: str | None) -> str:
-        semantics = cls._semantic_meta(action)
+    def _semantic_interface_type(self, action: Dict[str, Any], role: str, zone_kind: str | None) -> str:
+        semantics = self._semantic_meta(action)
         view_mode = str(semantics.get("view_mode") or "").strip().lower()
         if view_mode == "structure":
             return "structure_review"
-        return cls._interface_type_for_role(role, zone_kind)
+        return self._interface_type_for_role(role, zone_kind)
+
+    def _semantic_metadata_fields(
+        self,
+        action: Dict[str, Any],
+        *,
+        role: str,
+        parent_id: str | None,
+        assembly_id: str | None,
+        system_id: str | None,
+    ) -> Dict[str, Any]:
+        record = self._semantic_record(action)
+        branch_path = list(record.get("branch_path") or [])
+        return {
+            "semantic_element_id": self._semantic_id(action),
+            "semantic_role": role,
+            "semantic_parent_id": parent_id,
+            "semantic_assembly_id": assembly_id,
+            "semantic_system_id": system_id,
+            "semantic_branch_path": branch_path,
+            "semantic_record_present": bool(record),
+        }
 
     def _wall_source(
         self, action: Dict[str, Any], materials: Dict[str, MaterialSpec], sections: Dict[str, SectionSpec]
@@ -182,14 +236,16 @@ class StructuralSourceModelBuilder:
         structural_family = "substructure" if role == "retaining" else "panel_system"
         parent_id = self._semantic_parent_id(action, self._parent_for_wall(source_name, role))
         identity = self._identity_for_zone(role, structural_family, parent_id)
+        system_id = self._semantic_system_id(action, structural_family, str(identity["system_id"]))
+        assembly_id = self._semantic_assembly_id(action, identity["assembly_id"])
         return StructuralSourceElement(
             id=self._semantic_id(action),
             kind="wall",
             role=role,
             structural_family=structural_family,
             parent_id=parent_id,
-            system_id=self._semantic_system_id(action, structural_family, str(identity["system_id"])),
-            assembly_id=self._semantic_assembly_id(action, identity["assembly_id"]),
+            system_id=system_id,
+            assembly_id=assembly_id,
             layout_zone_id=identity["layout_zone_id"],
             layout_zone_kind=identity["layout_zone_kind"],
             interface_type=self._semantic_interface_type(action, role, identity["layout_zone_kind"]),
@@ -202,7 +258,11 @@ class StructuralSourceModelBuilder:
                 "thickness": thickness,
             },
             orientation={"rotation_deg": math.degrees(math.atan2(dy, dx))},
-            metadata={"source_action": "create_wall", "source_name": source_name},
+            metadata={
+                "source_action": "create_wall",
+                "source_name": source_name,
+                **self._semantic_metadata_fields(action, role=role, parent_id=parent_id, assembly_id=assembly_id, system_id=system_id),
+            },
         )
 
     def _slab_source(
@@ -233,14 +293,16 @@ class StructuralSourceModelBuilder:
         fallback_parent_id = "foundation:basement" if role == "foundation" else self._diaphragm_parent_id(str(action.get("storey") or action["name"]))
         parent_id = self._semantic_parent_id(action, fallback_parent_id)
         identity = self._identity_for_zone(role, structural_family, parent_id)
+        system_id = self._semantic_system_id(action, structural_family, str(identity["system_id"]))
+        assembly_id = self._semantic_assembly_id(action, identity["assembly_id"])
         return StructuralSourceElement(
             id=self._semantic_id(action),
             kind="panel",
             role=role,
             structural_family=structural_family,
             parent_id=parent_id,
-            system_id=self._semantic_system_id(action, structural_family, str(identity["system_id"])),
-            assembly_id=self._semantic_assembly_id(action, identity["assembly_id"]),
+            system_id=system_id,
+            assembly_id=assembly_id,
             layout_zone_id=identity["layout_zone_id"],
             layout_zone_kind=identity["layout_zone_kind"],
             interface_type=self._semantic_interface_type(action, role, identity["layout_zone_kind"]),
@@ -252,7 +314,12 @@ class StructuralSourceModelBuilder:
                 "width": float(action["depth"]),
                 "thickness": thickness,
             },
-            metadata={"source_action": "create_rect_slab", "source_name": action["name"], "subkind": "slab"},
+            metadata={
+                "source_action": "create_rect_slab",
+                "source_name": action["name"],
+                "subkind": "slab",
+                **self._semantic_metadata_fields(action, role=role, parent_id=parent_id, assembly_id=assembly_id, system_id=system_id),
+            },
         )
 
     def _column_source(
@@ -279,14 +346,16 @@ class StructuralSourceModelBuilder:
         structural_family = self._family_for_column_role(role)
         parent_id = self._semantic_parent_id(action, self._parent_for_column(str(action["name"]), role, float(action["x"]), float(action["y"])))
         identity = self._identity_for_zone(role, structural_family, parent_id)
+        system_id = self._semantic_system_id(action, structural_family, str(identity["system_id"]))
+        assembly_id = self._semantic_assembly_id(action, identity["assembly_id"])
         return StructuralSourceElement(
             id=self._semantic_id(action),
             kind="column",
             role=role,
             structural_family=structural_family,
             parent_id=parent_id,
-            system_id=self._semantic_system_id(action, structural_family, str(identity["system_id"])),
-            assembly_id=self._semantic_assembly_id(action, identity["assembly_id"]),
+            system_id=system_id,
+            assembly_id=assembly_id,
             layout_zone_id=identity["layout_zone_id"],
             layout_zone_kind=identity["layout_zone_kind"],
             interface_type=self._semantic_interface_type(action, role, identity["layout_zone_kind"]),
@@ -299,7 +368,11 @@ class StructuralSourceModelBuilder:
                 "depth": depth,
             },
             orientation={"rotation_deg": float(action.get("rotation_deg") or 0.0)},
-            metadata={"source_action": "create_column", "source_name": action["name"]},
+            metadata={
+                "source_action": "create_column",
+                "source_name": action["name"],
+                **self._semantic_metadata_fields(action, role=role, parent_id=parent_id, assembly_id=assembly_id, system_id=system_id),
+            },
         )
 
     def _footing_source(
@@ -327,14 +400,16 @@ class StructuralSourceModelBuilder:
         structural_family = "substructure"
         parent_id = self._semantic_parent_id(action, f"foundation:{str(storey_name or 'subgrade').lower().replace(' ', '_')}")
         identity = self._identity_for_zone(role, structural_family, parent_id)
+        system_id = self._semantic_system_id(action, structural_family, str(identity["system_id"]))
+        assembly_id = self._semantic_assembly_id(action, identity["assembly_id"])
         return StructuralSourceElement(
             id=self._semantic_id(action),
             kind="foundation",
             role=role,
             structural_family=structural_family,
             parent_id=parent_id,
-            system_id=self._semantic_system_id(action, structural_family, str(identity["system_id"])),
-            assembly_id=self._semantic_assembly_id(action, identity["assembly_id"]),
+            system_id=system_id,
+            assembly_id=assembly_id,
             layout_zone_id=identity["layout_zone_id"],
             layout_zone_kind=identity["layout_zone_kind"],
             interface_type=self._semantic_interface_type(action, role, identity["layout_zone_kind"]),
@@ -355,6 +430,7 @@ class StructuralSourceModelBuilder:
                 "service_reaction_kN": foundation.get("service_reaction_kN") or foundation.get("service_reaction_kn"),
                 "rebar_weight_kg": foundation.get("rebar_weight_kg"),
                 "rebar_schedule": foundation.get("rebar_schedule"),
+                **self._semantic_metadata_fields(action, role=role, parent_id=parent_id, assembly_id=assembly_id, system_id=system_id),
             },
         )
 
@@ -389,14 +465,16 @@ class StructuralSourceModelBuilder:
         structural_family = self._family_for_beam_role(role)
         parent_id = self._semantic_parent_id(action, self._parent_for_beam(str(action["name"]), role, str(action.get("storey") or "")))
         identity = self._identity_for_zone(role, structural_family, parent_id)
+        system_id = self._semantic_system_id(action, structural_family, str(identity["system_id"]))
+        assembly_id = self._semantic_assembly_id(action, identity["assembly_id"])
         return StructuralSourceElement(
             id=self._semantic_id(action),
             kind="beam",
             role=role,
             structural_family=structural_family,
             parent_id=parent_id,
-            system_id=self._semantic_system_id(action, structural_family, str(identity["system_id"])),
-            assembly_id=self._semantic_assembly_id(action, identity["assembly_id"]),
+            system_id=system_id,
+            assembly_id=assembly_id,
             layout_zone_id=identity["layout_zone_id"],
             layout_zone_kind=identity["layout_zone_kind"],
             interface_type=self._semantic_interface_type(action, role, identity["layout_zone_kind"]),
@@ -413,6 +491,7 @@ class StructuralSourceModelBuilder:
                 "source_action": "create_beam",
                 "source_name": action["name"],
                 "member_role": member_role,
+                **self._semantic_metadata_fields(action, role=role, parent_id=parent_id, assembly_id=assembly_id, system_id=system_id),
             },
         )
 
@@ -438,14 +517,16 @@ class StructuralSourceModelBuilder:
         parent_id = self._semantic_parent_id(action, self._facade_parent_id(str(action["name"])))
         structural_family = "panel_system" if role in {"envelope", "cladding"} else "secondary_frame"
         identity = self._identity_for_zone(role, structural_family, parent_id)
+        system_id = self._semantic_system_id(action, structural_family, str(identity["system_id"]))
+        assembly_id = self._semantic_assembly_id(action, identity["assembly_id"])
         return StructuralSourceElement(
             id=self._semantic_id(action),
             kind="panel",
             role=role,
             structural_family=structural_family,
             parent_id=parent_id,
-            system_id=self._semantic_system_id(action, structural_family, str(identity["system_id"])),
-            assembly_id=self._semantic_assembly_id(action, identity["assembly_id"]),
+            system_id=system_id,
+            assembly_id=assembly_id,
             layout_zone_id=identity["layout_zone_id"],
             layout_zone_kind=identity["layout_zone_kind"],
             interface_type=self._semantic_interface_type(action, role, identity["layout_zone_kind"]),
@@ -457,7 +538,11 @@ class StructuralSourceModelBuilder:
                 "height": float(action["height"]),
                 "thickness": thickness,
             },
-            metadata={"source_action": "create_panel", "source_name": action["name"]},
+            metadata={
+                "source_action": "create_panel",
+                "source_name": action["name"],
+                **self._semantic_metadata_fields(action, role=role, parent_id=parent_id, assembly_id=assembly_id, system_id=system_id),
+            },
         )
 
     def _curtain_wall_sources(
@@ -488,6 +573,8 @@ class StructuralSourceModelBuilder:
         parent_id = self._semantic_parent_id(action, f"curtain_wall:{self._semantic_id(action)}")
         structural_family = "panel_system"
         identity = self._identity_for_zone(role, structural_family, parent_id)
+        system_id = self._semantic_system_id(action, structural_family, str(identity["system_id"]))
+        assembly_id = self._semantic_assembly_id(action, identity["assembly_id"])
         elements: List[StructuralSourceElement] = []
         for row in range(rows):
             for column in range(columns):
@@ -507,8 +594,8 @@ class StructuralSourceModelBuilder:
                         role=role,
                         structural_family=structural_family,
                         parent_id=parent_id,
-                        system_id=self._semantic_system_id(action, structural_family, str(identity["system_id"])),
-                        assembly_id=self._semantic_assembly_id(child_action, identity["assembly_id"]),
+                        system_id=system_id,
+                        assembly_id=self._semantic_assembly_id(child_action, assembly_id),
                         layout_zone_id=identity["layout_zone_id"],
                         layout_zone_kind=identity["layout_zone_kind"],
                         interface_type=self._semantic_interface_type(action, role, identity["layout_zone_kind"]),
@@ -525,7 +612,17 @@ class StructuralSourceModelBuilder:
                             "thickness": thickness,
                         },
                         orientation={"rotation_deg": math.degrees(math.atan2(dy, dx))},
-                        metadata={"source_action": "create_curtain_wall", "source_name": action["name"]},
+                        metadata={
+                            "source_action": "create_curtain_wall",
+                            "source_name": action["name"],
+                            **self._semantic_metadata_fields(
+                                child_action,
+                                role=role,
+                                parent_id=parent_id,
+                                assembly_id=self._semantic_assembly_id(child_action, assembly_id),
+                                system_id=system_id,
+                            ),
+                        },
                     )
                 )
         return elements

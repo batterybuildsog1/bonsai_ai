@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 
 from bonsai_ai.contracts import AnalysisResult, DesignBrief, DesignPackage, PhysicalModelSpec, StructuralSourceElement, StructuralSourceModel
-from bonsai_ai.footing_selector import build_starter_footing_summary
+from bonsai_ai.footing_selector import build_starter_footing_summary, starter_footing_from_imposed_load
 
 
 class FootingSelectorTests(unittest.TestCase):
@@ -45,6 +45,15 @@ class FootingSelectorTests(unittest.TestCase):
         self.assertGreater(summary["footings"][0]["recommended_square_size_ft"], 0.0)
         self.assertGreater(summary["footings"][0]["rebar_weight_kg"], 0.0)
         self.assertGreater(summary["footings"][0]["concrete_strength_mpa"], 0.0)
+
+    def test_starter_footing_accounts_for_eccentricity(self) -> None:
+        concentric = starter_footing_from_imposed_load(400.0)
+        eccentric = starter_footing_from_imposed_load(400.0, eccentricity_x_m=0.25, eccentricity_y_m=0.10)
+
+        self.assertGreater(eccentric["recommended_square_size_ft"], concentric["recommended_square_size_ft"])
+        self.assertGreater(eccentric["required_square_size_for_kern_ft"], 0.0)
+        self.assertGreater(eccentric["eccentricity_x_m"], 0.0)
+        self.assertIn("middle-third eccentricity", eccentric["basis_notes"])
 
 
 if __name__ == "__main__":

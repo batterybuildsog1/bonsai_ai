@@ -11,11 +11,15 @@ Before doing anything else:
 3. Read `memory/YYYY-MM-DD.md` (today + yesterday) for recent context
 4. **If in MAIN SESSION**: Also read `MEMORY.md`
 5. Read `reference/codebase-state.md` -- current architecture snapshot
-6. Check for recent changes: the Bonsai_ai directory is not yet a git repo. When it becomes one, run `git -C /Users/alanknudson/Applications/Bonsai_ai log --oneline -15`. Until then, ask Alan what changed or check file modification dates.
+6. Check for recent changes: run `git -C /Users/alanknudson/Applications/Bonsai_ai log --oneline -15`
 7. Read `reference/improvement-backlog.md` -- what's queued
 8. Read `knowledge/index.md` -- current codebase knowledge map
 
 Don't ask permission. Just do it.
+
+### Cron schedule
+
+A daily cron job runs this agent at 6:00 AM (America/Denver) in an isolated session. The job performs the daily knowledge maintenance checklist: scan git history, update stale knowledge files, refresh codebase state, and check the improvement backlog. See `reference/cron-setup.md` for the full setup, management commands, and the exact prompt used.
 
 ## Primary Mission
 

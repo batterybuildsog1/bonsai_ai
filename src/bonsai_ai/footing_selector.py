@@ -70,11 +70,14 @@ def starter_footing_from_imposed_load(
     *,
     footing_family: str = "interior_spread_footing",
     allowable_bearing_psf: float = 2000.0,
+    eccentricity_x_m: float = 0.0,
+    eccentricity_y_m: float = 0.0,
     basis_note: str | None = None,
 ) -> Dict[str, Any]:
     service_vertical_lbf = max(float(imposed_load_kn), 1.0) / LBF_TO_KN
     required_area_ft2 = service_vertical_lbf / allowable_bearing_psf if allowable_bearing_psf else 0.0
-    square_size_ft = math.ceil(math.sqrt(max(required_area_ft2, 1.0)) * 2.0) / 2.0
+    kern_min_size_ft = max((6.0 * abs(float(eccentricity_x_m))) / FT_TO_M, (6.0 * abs(float(eccentricity_y_m))) / FT_TO_M, 0.0)
+    square_size_ft = math.ceil(max(math.sqrt(max(required_area_ft2, 1.0)), kern_min_size_ft, 1.0) * 2.0) / 2.0
     reinforcement = _starter_reinforcement(service_vertical_lbf, square_size_ft)
     return {
         "family": footing_family,
@@ -82,11 +85,14 @@ def starter_footing_from_imposed_load(
         "required_area_ft2": round(required_area_ft2, 2),
         "recommended_square_size_ft": square_size_ft,
         "recommended_square_size_m": round(square_size_ft * FT_TO_M, 3),
+        "eccentricity_x_m": round(float(eccentricity_x_m), 4),
+        "eccentricity_y_m": round(float(eccentricity_y_m), 4),
+        "required_square_size_for_kern_ft": round(kern_min_size_ft, 2),
         "allowable_bearing_psf": allowable_bearing_psf,
         "allowable_bearing_kpa": round(allowable_bearing_psf * PSF_TO_KPA, 2),
         **reinforcement,
         "basis_notes": basis_note
-        or "Starter footing sizing from imposed load using concept-level allowable bearing until geotechnical-specific design is available.",
+        or "Starter footing sizing from imposed load using concept-level allowable bearing and middle-third eccentricity checks until geotechnical-specific design is available.",
     }
 
 
@@ -130,21 +136,32 @@ def build_starter_footing_summary(package: DesignPackage) -> Dict[str, Any]:
         allowable_bearing_psf = 2000.0
         service_vertical_lbf = abs(float(reaction.get("fz") or 0.0)) * NEWTON_TO_LBF
         required_area_ft2 = service_vertical_lbf / allowable_bearing_psf if allowable_bearing_psf else 0.0
-        square_size_ft = math.ceil(math.sqrt(max(required_area_ft2, 1.0)) * 2.0) / 2.0
+        moment_x_nm = abs(float(reaction.get("mx") or 0.0))
+        moment_y_nm = abs(float(reaction.get("my") or 0.0))
+        imposed_load_kn = round(service_vertical_lbf * LBF_TO_KN, 2)
+        eccentricity_x_m = moment_y_nm / max(imposed_load_kn * 1000.0, 1.0)
+        eccentricity_y_m = moment_x_nm / max(imposed_load_kn * 1000.0, 1.0)
+        kern_min_size_ft = max((6.0 * eccentricity_x_m) / FT_TO_M, (6.0 * eccentricity_y_m) / FT_TO_M, 0.0)
+        square_size_ft = math.ceil(max(math.sqrt(max(required_area_ft2, 1.0)), kern_min_size_ft, 1.0) * 2.0) / 2.0
         reinforcement = _starter_reinforcement(service_vertical_lbf, square_size_ft)
         footing = {
             "target_id": element.id,
             "family": footing_family,
             "combo": combo_name,
             "service_vertical_lbf_proxy": round(service_vertical_lbf, 2),
-            "imposed_load_kn": round(service_vertical_lbf * LBF_TO_KN, 2),
+            "imposed_load_kn": imposed_load_kn,
+            "moment_x_nm": round(moment_x_nm, 2),
+            "moment_y_nm": round(moment_y_nm, 2),
+            "eccentricity_x_m": round(eccentricity_x_m, 4),
+            "eccentricity_y_m": round(eccentricity_y_m, 4),
             "required_area_ft2": round(required_area_ft2, 2),
             "recommended_square_size_ft": square_size_ft,
             "recommended_square_size_m": round(square_size_ft * FT_TO_M, 3),
+            "required_square_size_for_kern_ft": round(kern_min_size_ft, 2),
             "allowable_bearing_psf": allowable_bearing_psf,
             "allowable_bearing_kpa": round(allowable_bearing_psf * PSF_TO_KPA, 2),
             **reinforcement,
-            "basis_note": "Conservative starter sizing from solved support reactions using 2,000 psf allowable bearing until geotech-specific footing design is wired in.",
+            "basis_note": "Conservative starter sizing from solved support reactions using 2,000 psf allowable bearing and middle-third eccentricity checks until geotech-specific footing design is wired in.",
         }
         footings.append(footing)
         total_area_ft2 += square_size_ft * square_size_ft

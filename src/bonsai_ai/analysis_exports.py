@@ -553,9 +553,25 @@ class JsonAnalysisExportBackend(AnalysisExportBackend):
     def export(self, package: DesignPackage, output_dir: Path) -> List[PipelineArtifact]:
         if not package.analysis_request:
             raise ValueError("analysis_request must be present before analytical export")
+        if package.physical_model and not package.physical_model.semantic_model:
+            try:
+                from bonsai_ai_core.semantic_model import build_semantic_model
+
+                source_plan = package.physical_model.authored_plan or {
+                    "version": str(package.physical_model.plan.get("version") or "1.0"),
+                    "units": str(package.physical_model.plan.get("units") or "meters"),
+                    "summary": package.physical_model.summary,
+                    "assumptions": list(package.physical_model.assumptions),
+                    "actions": list(package.physical_model.plan.get("actions") or []),
+                }
+                if source_plan:
+                    package.physical_model.semantic_model = build_semantic_model(source_plan)
+            except Exception:
+                pass
 
         builder = AnalyticalModelBuilder()
         package.analytical_model = builder.build(package)
+        semantic_model_path = output_dir / "semantic_model.json"
         structural_source_path = output_dir / "structural_source_model.json"
         system_layout_path = output_dir / "system_layout.json"
         load_path_path = output_dir / "load_path_model.json"
@@ -575,6 +591,16 @@ class JsonAnalysisExportBackend(AnalysisExportBackend):
             resolution_summary = resolve_catalog_sections(package.structural_source_model, system_catalog)
             package.catalog_selection_summary["resolution_summary"] = resolution_summary
         artifacts = [
+            PipelineArtifact(
+                kind=ArtifactKind.SEMANTIC_MODEL,
+                format=ArtifactFormat.JSON,
+                path=str(semantic_model_path),
+                metadata={
+                    "role": ArtifactRole.SEMANTIC_MODEL.value,
+                    "label": "Semantic Building Model",
+                    "is_primary": bool(package.physical_model and package.physical_model.semantic_model),
+                },
+            ),
             PipelineArtifact(
                 kind=ArtifactKind.STRUCTURAL_SOURCE_MODEL,
                 format=ArtifactFormat.JSON,
@@ -706,6 +732,10 @@ class JsonAnalysisExportBackend(AnalysisExportBackend):
                 )
             )
 
+        if package.physical_model and package.physical_model.semantic_model:
+            semantic_model_path.write_text(json.dumps(package.physical_model.semantic_model, indent=2))
+        else:
+            semantic_model_path.write_text(json.dumps({}, indent=2))
         if package.structural_source_model:
             structural_source_path.write_text(json.dumps(asdict(package.structural_source_model), indent=2))
         system_layout_path.write_text(json.dumps(package.system_layout or {}, indent=2))

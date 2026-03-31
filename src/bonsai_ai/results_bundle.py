@@ -49,6 +49,12 @@ class JsonResultsBundleBackend(ResultsBundleBackend):
             entrypoints={
                 "physical_ifc": self._entrypoint(package.physical_artifacts, ArtifactKind.PHYSICAL_IFC, output_dir),
                 "physical_plan": self._entrypoint(package.physical_artifacts, ArtifactKind.BIM_PLAN, output_dir),
+                "semantic_model": self._entrypoint(
+                    package.physical_artifacts,
+                    ArtifactKind.SEMANTIC_MODEL,
+                    output_dir,
+                    preferred_role=ArtifactRole.SEMANTIC_MODEL,
+                ),
                 "structural_source_model": self._entrypoint(
                     all_artifacts,
                     ArtifactKind.STRUCTURAL_SOURCE_MODEL,
@@ -254,6 +260,7 @@ def _role_for_kind(kind: ArtifactKind) -> ArtifactRole:
     mapping = {
         ArtifactKind.DESIGN_PACKAGE: ArtifactRole.MANIFEST,
         ArtifactKind.BIM_PLAN: ArtifactRole.BIM_PLAN,
+        ArtifactKind.SEMANTIC_MODEL: ArtifactRole.SEMANTIC_MODEL,
         ArtifactKind.PHYSICAL_IFC: ArtifactRole.PRIMARY_IFC,
         ArtifactKind.STRUCTURAL_SOURCE_MODEL: ArtifactRole.STRUCTURAL_SOURCE_MODEL,
         ArtifactKind.ANALYTICAL_MODEL: ArtifactRole.ANALYSIS_MODEL,
@@ -271,6 +278,7 @@ def _label_for_kind(kind: ArtifactKind) -> str:
     mapping = {
         ArtifactKind.DESIGN_PACKAGE: "Design Package Manifest",
         ArtifactKind.BIM_PLAN: "Physical Model Plan",
+        ArtifactKind.SEMANTIC_MODEL: "Semantic Building Model",
         ArtifactKind.PHYSICAL_IFC: "Primary IFC",
         ArtifactKind.STRUCTURAL_SOURCE_MODEL: "Structural Source Model",
         ArtifactKind.ANALYTICAL_MODEL: "Analytical Model",

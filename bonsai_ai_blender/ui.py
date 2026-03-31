@@ -9,6 +9,8 @@ import bpy
 from bpy.props import BoolProperty, EnumProperty, PointerProperty, StringProperty
 from bpy_extras.io_utils import ImportHelper
 
+from . import agent_panel
+
 from .presentation import (
     apply_section_box_from_selection,
     bake_presentation,
@@ -1048,9 +1050,11 @@ def register():
         bpy.utils.register_class(cls)
     bpy.types.Scene.bonsai_ai_settings = PointerProperty(type=BonsaiAISettings)
     _register_keymaps()
+    agent_panel.register()
 
 
 def unregister():
+    agent_panel.unregister()
     _unregister_keymaps()
     del bpy.types.Scene.bonsai_ai_settings
     for cls in reversed(CLASSES):

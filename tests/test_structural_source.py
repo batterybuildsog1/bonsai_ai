@@ -201,6 +201,94 @@ class StructuralSourceTests(unittest.TestCase):
         self.assertEqual(footing.metadata["imposed_load_kN"], 850.0)
         self.assertEqual(footing.metadata["rebar_weight_kg"], 190.0)
 
+    def test_structural_source_builder_carries_semantic_branch_lineage(self) -> None:
+        package = DesignPackage(
+            brief=DesignBrief(prompt="Semantic lineage", analysis_domains=[AnalysisDomain.WIND]),
+            physical_model=PhysicalModelSpec(
+                summary="Semantic lineage",
+                assumptions=[],
+                plan={
+                    "version": "1.0",
+                    "units": "meters",
+                    "actions": [
+                        {
+                            "type": "create_column",
+                            "name": "Column Raw",
+                            "storey": "Level 1",
+                            "x": 0.0,
+                            "y": 0.0,
+                            "base_z": 0.0,
+                            "width": 0.4,
+                            "depth": 0.4,
+                            "height": 4.0,
+                            "semantics": {"element_id": "column_a"},
+                        }
+                    ],
+                },
+                semantic_model={
+                    "version": "1.0",
+                    "units": "meters",
+                    "summary": "Semantic lineage",
+                    "assumptions": [],
+                    "assemblies": [
+                        {
+                            "id": "assembly:frame_line_a",
+                            "name": "frame_line_a",
+                            "kind": "assembly",
+                            "parent_id": "branch:level-1-structure-primary",
+                            "branch_path": ["Level 1", "Structure", "Primary"],
+                            "children_ids": [],
+                            "element_ids": ["column_a"],
+                            "metadata": {},
+                        }
+                    ],
+                    "roots": ["branch:level-1"],
+                    "metadata": {"element_count": 1, "assembly_count": 1, "root_count": 1},
+                    "elements": [
+                        {
+                            "id": "column_a",
+                            "type": "create_column",
+                            "name": "Column Raw",
+                            "storey": "Level 1",
+                            "parent_id": "frame_line_a",
+                            "assembly_id": "primary_frame_a",
+                            "branch_path": ["Level 1", "Structure", "Primary"],
+                            "selector_tags": ["primary"],
+                            "action": {
+                                "type": "create_column",
+                                "name": "Column Raw",
+                                "storey": "Level 1",
+                                "x": 0.0,
+                                "y": 0.0,
+                                "base_z": 0.0,
+                                "width": 0.4,
+                                "depth": 0.4,
+                                "height": 4.0,
+                                "semantics": {
+                                    "element_id": "column_a",
+                                    "role": "primary_column",
+                                    "system_name": "Primary Frame",
+                                    "parent_id": "frame_line_a",
+                                    "assembly_id": "primary_frame_a",
+                                },
+                            },
+                        }
+                    ],
+                },
+            ),
+        )
+
+        source = StructuralSourceModelBuilder().build(package)
+        column = next(element for element in source.elements if element.id == "column_a")
+
+        self.assertEqual(column.parent_id, "frame_line_a")
+        self.assertEqual(column.assembly_id, "primary_frame_a")
+        self.assertEqual(column.system_id, "system:primary_frame")
+        self.assertEqual(column.metadata["semantic_branch_path"], ["Level 1", "Structure", "Primary"])
+        self.assertTrue(column.metadata["semantic_record_present"])
+        self.assertEqual(source.metadata["semantic_model_element_count"], 1)
+        self.assertEqual(source.metadata["semantic_model_assembly_count"], 1)
+
     def test_reducer_emits_profile_specific_models(self) -> None:
         package = DesignPackage(
             brief=DesignBrief(prompt="Reduce", analysis_domains=[AnalysisDomain.WIND]),
@@ -293,6 +381,82 @@ class StructuralSourceTests(unittest.TestCase):
         fast_element = next(element for element in fast_model.elements if element.id == "main_column")
         self.assertEqual(fast_element.metadata["system_id"], "primary_frame_system")
         self.assertEqual(fast_element.metadata["layout_zone_kind"], "frame_line")
+
+    def test_structural_source_builder_uses_semantic_model_records_when_present(self) -> None:
+        package = DesignPackage(
+            brief=DesignBrief(prompt="Semantic handoff"),
+            physical_model=PhysicalModelSpec(
+                summary="Semantic handoff summary",
+                assumptions=[],
+                plan={
+                    "version": "1.0",
+                    "units": "meters",
+                    "actions": [
+                        {
+                            "type": "create_column",
+                            "name": "Column A",
+                            "storey": "Level 1",
+                            "x": 0.0,
+                            "y": 0.0,
+                            "base_z": 0.0,
+                            "width": 0.4,
+                            "depth": 0.4,
+                            "height": 4.0,
+                            "semantics": {"element_id": "column_a"},
+                        }
+                    ],
+                },
+                semantic_model={
+                    "version": "1.0",
+                    "units": "meters",
+                    "summary": "Semantic handoff summary",
+                    "assumptions": [],
+                    "roots": ["branch:level-1-structure"],
+                    "metadata": {"element_count": 1, "assembly_count": 2, "root_count": 1},
+                    "assemblies": [],
+                    "elements": [
+                        {
+                            "id": "column_a",
+                            "type": "create_column",
+                            "name": "Column A",
+                            "storey": "Level 1",
+                            "parent_id": "frame_line:grid_a",
+                            "assembly_id": "primary_frame:grid_a",
+                            "branch_path": ["Level 1", "Structure", "Grid A"],
+                            "selector_tags": ["primary"],
+                            "action": {
+                                "type": "create_column",
+                                "name": "Column A",
+                                "storey": "Level 1",
+                                "x": 0.0,
+                                "y": 0.0,
+                                "base_z": 0.0,
+                                "width": 0.4,
+                                "depth": 0.4,
+                                "height": 4.0,
+                                "semantics": {
+                                    "element_id": "column_a",
+                                    "role": "primary_column",
+                                    "system_name": "Primary Frame",
+                                    "parent_id": "frame_line:grid_a",
+                                    "assembly_id": "primary_frame:grid_a",
+                                    "group_path": ["Structure", "Grid A"],
+                                },
+                            },
+                        }
+                    ],
+                },
+            ),
+        )
+
+        source = StructuralSourceModelBuilder().build(package)
+
+        column = source.elements[0]
+        self.assertEqual(column.parent_id, "frame_line:grid_a")
+        self.assertEqual(column.assembly_id, "primary_frame:grid_a")
+        self.assertEqual(column.system_id, "system:primary_frame")
+        self.assertEqual(source.metadata["semantic_model_element_count"], 1)
+        self.assertEqual(source.metadata["semantic_model_assembly_count"], 2)
 
     def test_engineering_model_emitter_scopes(self) -> None:
         package = DesignPackage(

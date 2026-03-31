@@ -7,11 +7,12 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List
 
-from .catalog_resolver import resolve_catalog_sections
-from .contracts import AnalysisResult, ArtifactFormat, ArtifactKind, DesignPackage, PipelineArtifact
 from .analysis_exports import AnalyticalModelBuilder
+from .catalog_resolver import resolve_catalog_sections
+from .contracts import AnalysisResult, ArtifactFormat, ArtifactKind, ArtifactRole, DesignPackage, PipelineArtifact
+from .execution import HeadlessIfcExecutor
 from .pipeline import SolverBackend
-from .plan_roundtrip import apply_sized_sections_to_plan
+from .plan_roundtrip import apply_sized_sections_to_physical_model
 from .pynite_backend import PyNiteSolverBackend
 from .structural_source import StructuralAnalysisReducer
 
@@ -105,7 +106,7 @@ class GroupedSectionSizer:
             "final_group_unity_checks": final_evaluation,
             "largest_group_unity": max((value["unity"] for value in final_evaluation.values() if value.get("status") == "evaluated"), default=0.0),
         }
-        roundtrip_summary = apply_sized_sections_to_plan(package.physical_model.plan, package.structural_source_model)
+        roundtrip_summary = apply_sized_sections_to_physical_model(package.physical_model, package.structural_source_model)
         sizing_summary["plan_roundtrip"] = roundtrip_summary
         summary_path = output_dir / "sizing_summary.json"
         summary_path.write_text(json.dumps(sizing_summary, indent=2))
@@ -115,26 +116,28 @@ class GroupedSectionSizer:
         costs_path.write_text(json.dumps(section_costs, indent=2))
         roundtrip_path = output_dir / "plan_roundtrip_summary.json"
         roundtrip_path.write_text(json.dumps(roundtrip_summary, indent=2))
+        roundtrip_artifacts = _write_roundtripped_physical_outputs(package, output_dir)
         artifacts = [
             PipelineArtifact(
                 kind=ArtifactKind.ENGINEERING_REPORT,
                 format=ArtifactFormat.JSON,
                 path=str(summary_path),
-                metadata={"role": "engineering_report", "label": "Sizing Summary", "report_kind": "sizing_summary", "is_primary": False},
+                metadata={"role": ArtifactRole.ENGINEERING_REPORT.value, "label": "Sizing Summary", "report_kind": "sizing_summary", "is_primary": False},
             ),
             PipelineArtifact(
                 kind=ArtifactKind.ENGINEERING_REPORT,
                 format=ArtifactFormat.JSON,
                 path=str(costs_path),
-                metadata={"role": "engineering_report", "label": "Selected Section Costs", "report_kind": "selected_section_costs", "is_primary": False},
+                metadata={"role": ArtifactRole.ENGINEERING_REPORT.value, "label": "Selected Section Costs", "report_kind": "selected_section_costs", "is_primary": False},
             ),
             PipelineArtifact(
                 kind=ArtifactKind.ENGINEERING_REPORT,
                 format=ArtifactFormat.JSON,
                 path=str(roundtrip_path),
-                metadata={"role": "engineering_report", "label": "Plan Roundtrip Summary", "report_kind": "plan_roundtrip_summary", "is_primary": False},
+                metadata={"role": ArtifactRole.ENGINEERING_REPORT.value, "label": "Plan Roundtrip Summary", "report_kind": "plan_roundtrip_summary", "is_primary": False},
             ),
         ]
+        artifacts.extend(roundtrip_artifacts)
         return final_result, sizing_summary, artifacts
 
     def _build_analytical_model(self, package: DesignPackage, source_model) -> Any:
@@ -314,3 +317,64 @@ def _selected_section_costs(analytical_model, group_demands: Dict[str, Dict[str,
         "total_weight_n": round(total_weight_n, 3),
         "total_weight_kips": round(total_weight_n / 4448.2216152605, 3),
     }
+
+
+def _write_roundtripped_physical_outputs(package: DesignPackage, output_dir: Path) -> List[PipelineArtifact]:
+    if not package.physical_model:
+        return []
+
+    artifacts: List[PipelineArtifact] = []
+
+    sized_plan_path = output_dir / "physical_model_sized_plan.json"
+    sized_plan_path.write_text(json.dumps(package.physical_model.plan, indent=2))
+    artifacts.append(
+        PipelineArtifact(
+            kind=ArtifactKind.BIM_PLAN,
+            format=ArtifactFormat.JSON,
+            path=str(sized_plan_path),
+            metadata={"role": ArtifactRole.BIM_PLAN.value, "label": "Sized Physical Plan", "is_primary": False},
+        )
+    )
+
+    if package.physical_model.authored_plan:
+        sized_authored_path = output_dir / "physical_model_sized_authored_plan.json"
+        sized_authored_path.write_text(json.dumps(package.physical_model.authored_plan, indent=2))
+        artifacts.append(
+            PipelineArtifact(
+                kind=ArtifactKind.BIM_PLAN,
+                format=ArtifactFormat.JSON,
+                path=str(sized_authored_path),
+                metadata={"role": ArtifactRole.BIM_PLAN.value, "label": "Sized Authored Physical Plan", "is_primary": False},
+            )
+        )
+
+    if package.physical_model.semantic_model:
+        sized_semantic_path = output_dir / "physical_model_sized_semantic_model.json"
+        sized_semantic_path.write_text(json.dumps(package.physical_model.semantic_model, indent=2))
+        artifacts.append(
+            PipelineArtifact(
+                kind=ArtifactKind.SEMANTIC_MODEL,
+                format=ArtifactFormat.JSON,
+                path=str(sized_semantic_path),
+                metadata={"role": ArtifactRole.SEMANTIC_MODEL.value, "label": "Sized Semantic Building Model", "is_primary": False},
+            )
+        )
+
+    sized_ifc_path = output_dir / "physical_model_sized.ifc"
+    report = HeadlessIfcExecutor(default_storey_name="Level 0", overwrite_existing=True).execute_plan(package.physical_model.plan, sized_ifc_path)
+    artifacts.append(
+        PipelineArtifact(
+            kind=ArtifactKind.PHYSICAL_IFC,
+            format=ArtifactFormat.IFC,
+            path=str(sized_ifc_path),
+            metadata={
+                "role": ArtifactRole.ENGINEERING_REPORT.value,
+                "label": "Sized Physical IFC",
+                "report_kind": "sized_physical_ifc",
+                "is_primary": False,
+                "created": list(report.created),
+            },
+        )
+    )
+
+    return artifacts

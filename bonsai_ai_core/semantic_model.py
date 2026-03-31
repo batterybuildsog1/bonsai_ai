@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+from collections import Counter
 import re
 from typing import Any, Dict, Iterable, List
 
@@ -25,11 +26,31 @@ def build_semantic_model(plan: Dict[str, Any]) -> Dict[str, Any]:
             continue
         elements.append(_normalize_element(action, index=index, seen_ids=seen_ids))
 
+    assemblies = _build_assemblies(elements)
+    role_counts = Counter()
+    storey_counts = Counter()
+    action_type_counts = Counter()
+    for element in elements:
+        semantics = dict(element["action"].get("semantics") or {})
+        role = str(semantics.get("role") or "").strip()
+        storey = str(element.get("storey") or "").strip()
+        if role:
+            role_counts[role] += 1
+        if storey:
+            storey_counts[storey] += 1
+        action_type_counts[str(element["type"])] += 1
     return {
         "version": authored["version"],
         "units": authored["units"],
         "summary": authored["summary"],
         "assumptions": list(authored["assumptions"]),
+        "assemblies": assemblies["assemblies"],
+        "roots": assemblies["roots"],
+        "metadata": {
+            "element_count": len(elements),
+            "assembly_count": len(assemblies["assemblies"]),
+            "root_count": len(assemblies["roots"]),
+        },
         "elements": [
             {
                 "id": element["id"],
@@ -44,6 +65,14 @@ def build_semantic_model(plan: Dict[str, Any]) -> Dict[str, Any]:
             }
             for element in elements
         ],
+        "metadata": {
+            "element_count": len(elements),
+            "assembly_count": len(assemblies["assemblies"]),
+            "root_count": len(assemblies["roots"]),
+            "role_counts": dict(role_counts),
+            "storey_counts": dict(storey_counts),
+            "action_type_counts": dict(action_type_counts),
+        },
     }
 
 
@@ -55,6 +84,80 @@ def semantic_model_to_plan(model: Dict[str, Any]) -> Dict[str, Any]:
         "assumptions": list(model["assumptions"]),
         "actions": [copy.deepcopy(element["action"]) for element in model.get("elements", [])],
     }
+
+
+def _build_assemblies(elements: Iterable[JsonDict]) -> Dict[str, Any]:
+    nodes: Dict[str, JsonDict] = {}
+    roots: List[str] = []
+
+    def ensure_node(node_id: str, *, name: str, kind: str, parent_id: str | None, branch_path: List[str]) -> JsonDict:
+        node = nodes.get(node_id)
+        if node is None:
+            node = {
+                "id": node_id,
+                "name": name,
+                "kind": kind,
+                "parent_id": parent_id,
+                "branch_path": list(branch_path),
+                "children_ids": [],
+                "element_ids": [],
+                "metadata": {},
+            }
+            nodes[node_id] = node
+        if parent_id:
+            parent = nodes.get(parent_id)
+            if parent is None:
+                parent = ensure_node(parent_id, name=parent_id, kind="assembly", parent_id=None, branch_path=branch_path[:-1])
+            if node_id not in parent["children_ids"]:
+                parent["children_ids"].append(node_id)
+        elif node_id not in roots:
+            roots.append(node_id)
+        return node
+
+    for element in elements:
+        parent_node_id: str | None = None
+        branch_path = list(element.get("branch_path") or [])
+        running_path: List[str] = []
+        for token in branch_path:
+            running_path.append(str(token))
+            branch_id = f"branch:{_slug_path(running_path)}"
+            node = ensure_node(
+                branch_id,
+                name=str(token),
+                kind="branch",
+                parent_id=parent_node_id,
+                branch_path=running_path,
+            )
+            parent_node_id = node["id"]
+
+        explicit_parent_id = str(element.get("parent_id") or "").strip()
+        explicit_assembly_id = str(element.get("assembly_id") or "").strip()
+
+        if explicit_parent_id:
+            parent_node_id = ensure_node(
+                f"assembly:{explicit_parent_id}",
+                name=explicit_parent_id,
+                kind="assembly",
+                parent_id=parent_node_id,
+                branch_path=branch_path,
+            )["id"]
+        if explicit_assembly_id and explicit_assembly_id != explicit_parent_id:
+            parent_node_id = ensure_node(
+                f"assembly:{explicit_assembly_id}",
+                name=explicit_assembly_id,
+                kind="assembly",
+                parent_id=parent_node_id,
+                branch_path=branch_path,
+            )["id"]
+
+        attach_to = parent_node_id
+        if attach_to:
+            node = nodes[attach_to]
+            if element["id"] not in node["element_ids"]:
+                node["element_ids"].append(element["id"])
+
+    assemblies = sorted(nodes.values(), key=lambda node: (tuple(node["branch_path"]), node["kind"], node["id"]))
+    return {"assemblies": assemblies, "roots": roots}
 
 
 def _apply_edit_action(elements: List[JsonDict], action: JsonDict, seen_ids: set[str]) -> None:
@@ -320,3 +423,8 @@ def _inherit_rebuild_defaults(
     if semantics:
         normalized["semantics"] = semantics
     return normalized
+
+
+def _slug_path(path: Iterable[str]) -> str:
+    safe = "-".join(re.sub(r"[^a-z0-9]+", "-", str(part).lower()).strip("-") for part in path if str(part).strip())
+    return safe or "root"

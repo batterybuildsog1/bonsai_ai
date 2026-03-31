@@ -11,3 +11,8 @@ out/
 .openclaw/
 openclaw/memory/
 openclaw/workspaces/bim_maintainer/memory/
+node_modules/
+*.wasm
+.DS_Store
+viewer/dist/
+viewer/public/web-ifc.wasm

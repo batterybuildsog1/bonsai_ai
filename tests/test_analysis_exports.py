@@ -91,7 +91,10 @@ class AnalysisExportTests(unittest.TestCase):
 
         artifacts = JsonAnalysisExportBackend().export(package, output_dir)
 
-        self.assertEqual(len(artifacts), 9)
+        self.assertEqual(len(artifacts), 10)
+        semantic_model = json.loads((output_dir / "semantic_model.json").read_text())
+        self.assertIn("elements", semantic_model)
+        self.assertGreaterEqual(semantic_model["metadata"]["element_count"], 3)
         structural_source = json.loads((output_dir / "structural_source_model.json").read_text())
         self.assertEqual(structural_source["elements"][0]["role"], "primary_column")
         system_layout = json.loads((output_dir / "system_layout.json").read_text())
@@ -122,13 +125,14 @@ class AnalysisExportTests(unittest.TestCase):
         self.assertIn("beam", {item["kind"] for item in handoff["objects"]})
         macro = (output_dir / "freecad_handoff.py").read_text()
         self.assertIn("freecad_handoff.json", macro)
-        self.assertEqual(artifacts[0].metadata["label"], "Structural Source Model")
-        self.assertEqual(artifacts[1].metadata["label"], "System Layout")
-        self.assertEqual(artifacts[2].metadata["label"], "Load Path Model")
-        self.assertEqual(artifacts[3].metadata["label"], "Catalog Selection Summary")
-        self.assertEqual(artifacts[6].metadata["label"], "Analysis Profile Summary")
-        self.assertEqual(artifacts[7].metadata["label"], "FreeCAD Handoff JSON")
-        self.assertEqual(artifacts[8].metadata["label"], "FreeCAD Handoff Script")
+        self.assertEqual(artifacts[0].metadata["label"], "Semantic Building Model")
+        self.assertEqual(artifacts[1].metadata["label"], "Structural Source Model")
+        self.assertEqual(artifacts[2].metadata["label"], "System Layout")
+        self.assertEqual(artifacts[3].metadata["label"], "Load Path Model")
+        self.assertEqual(artifacts[4].metadata["label"], "Catalog Selection Summary")
+        self.assertEqual(artifacts[7].metadata["label"], "Analysis Profile Summary")
+        self.assertEqual(artifacts[8].metadata["label"], "FreeCAD Handoff JSON")
+        self.assertEqual(artifacts[9].metadata["label"], "FreeCAD Handoff Script")
 
     def test_export_writes_engineering_scope_models(self) -> None:
         output_dir = Path("/tmp/bonsai_analysis_export_engineering_models")

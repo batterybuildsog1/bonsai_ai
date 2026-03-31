@@ -1,5 +1,13 @@
 # Deep Refactor Architecture
 
+Implementation tracker:
+
+- [OPTION_C_DEEP_CUTOVER_TRACKER.md](/Users/alanknudson/Applications/Bonsai_ai/docs/OPTION_C_DEEP_CUTOVER_TRACKER.md)
+
+Active implementation tracker:
+
+- [OPTION_C_DEEP_TRACKER.md](/Users/alanknudson/Applications/Bonsai_ai/docs/OPTION_C_DEEP_TRACKER.md)
+
 ## Goal
 
 Turn Blender into a thin client for an AI-driven design and engineering workflow that can:

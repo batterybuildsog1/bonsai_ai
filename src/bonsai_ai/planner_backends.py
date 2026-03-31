@@ -46,6 +46,7 @@ class CorePhysicalPlannerBackend:
                 "model": self.model,
                 "authored_action_count": len(authored_plan["actions"]),
                 "semantic_element_count": len(semantic_model.get("elements", [])),
+                "semantic_assembly_count": len(semantic_model.get("assemblies", [])),
                 "compiled_action_count": len(compiled_plan["actions"]),
             },
         )
