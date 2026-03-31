@@ -485,12 +485,24 @@ class PyNiteSolverBackend(SolverBackend):
 
     @staticmethod
     def _section_properties(section: SectionSpec) -> Dict[str, float]:
+        """Map Bonsai section properties to PyNite axis convention.
+
+        Axis convention mapping:
+          Bonsai ix_m4 (strong/major axis) -> PyNite Iz (Z = major/strong axis)
+          Bonsai iy_m4 (weak/minor axis)   -> PyNite Iy (Y = minor/weak axis)
+
+        PyNite convention (from Section.py):
+          Iy = second moment of area about the Y (minor) axis
+          Iz = second moment of area about the Z (major) axis
+        """
         explicit = dict((section.metadata or {}).get("section_properties") or {})
         if explicit:
             return {
                 "area": float(explicit.get("area_m2", 0.0)),
-                "iy": float(explicit.get("ix_m4", explicit.get("iy_m4", 0.0))),
-                "iz": float(explicit.get("iy_m4", explicit.get("iz_m4", 0.0))),
+                # Bonsai iy_m4 (weak/minor) -> PyNite Iy (Y = minor/weak axis)
+                "iy": float(explicit.get("iy_m4", explicit.get("iz_m4", 0.0))),
+                # Bonsai ix_m4 (strong/major) -> PyNite Iz (Z = major/strong axis)
+                "iz": float(explicit.get("ix_m4", explicit.get("iy_m4", 0.0))),
                 "j": float(explicit.get("j_m4", 0.0)),
                 "weight_n_per_m": float(explicit.get("weight_n_per_m", 0.0)),
             }
@@ -498,8 +510,10 @@ class PyNiteSolverBackend(SolverBackend):
         depth = float(section.dimensions.get("depth", 0.3))
         return {
             "area": width * depth,
-            "iy": width * depth**3 / 12.0,
-            "iz": depth * width**3 / 12.0,
+            # width * depth^3 / 12 = strong axis (larger for depth > width) -> PyNite Iz (major)
+            "iz": width * depth**3 / 12.0,
+            # depth * width^3 / 12 = weak axis (smaller for depth > width) -> PyNite Iy (minor)
+            "iy": depth * width**3 / 12.0,
             "j": width * depth * (width**2 + depth**2) / 12.0,
             "weight_n_per_m": 0.0,
         }

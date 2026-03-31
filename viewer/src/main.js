@@ -1,9 +1,10 @@
 // Boot sequence for the Bonsai BIM Viewer
 // Loads IFC file, initializes all views, sets up keyboard shortcuts
+//
+// Engine selection: ?engine=ifc-lite (default) or ?engine=web-ifc (legacy)
 
 import "./styles.css";
 import { App } from "./app.js";
-import * as viewer from "./viewer.js";
 import * as inspector from "./inspector.js";
 import * as chat from "./chat.js";
 
@@ -11,15 +12,39 @@ import * as chat from "./chat.js";
 const DEFAULT_IFC_PATH = "/out/retail_terrace_concept/retail_terrace_concept.ifc";
 
 function getIfcUrl() {
-  // Check URL params first
   const params = new URLSearchParams(window.location.search);
   return params.get("model") || params.get("ifc") || DEFAULT_IFC_PATH;
+}
+
+function getEngine() {
+  const params = new URLSearchParams(window.location.search);
+  return params.get("engine") || "ifc-lite";
+}
+
+async function loadViewerModule(engine) {
+  if (engine === "web-ifc") {
+    console.log("[boot] Using legacy web-ifc engine");
+    return await import("./viewer-legacy.js");
+  }
+  // Default: IFC-Lite
+  try {
+    console.log("[boot] Using IFC-Lite engine");
+    const mod = await import("./ifc-lite-viewer.js");
+    return mod;
+  } catch (err) {
+    console.warn("[boot] IFC-Lite import failed, falling back to web-ifc:", err);
+    return await import("./viewer-legacy.js");
+  }
 }
 
 async function boot() {
   const root = document.querySelector("#app");
   const loadingEl = root.querySelector("[data-loading]");
   const loadingText = root.querySelector("[data-loading-text]");
+
+  const engine = getEngine();
+  if (loadingText) loadingText.textContent = `Initializing ${engine} engine...`;
+  const viewer = await loadViewerModule(engine);
 
   const app = new App(root);
   await app.boot(viewer, inspector, chat);

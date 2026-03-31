@@ -1,6 +1,6 @@
 import { defineConfig } from "vite";
 import { resolve } from "node:path";
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync, copyFileSync, mkdirSync } from "node:fs";
 
 const PROJECT_ROOT = resolve(import.meta.dirname, "..");
 
@@ -20,7 +20,26 @@ export default defineConfig({
       "Cross-Origin-Embedder-Policy": "require-corp",
     },
   },
+  worker: {
+    format: "es",
+  },
   plugins: [
+    {
+      // Fix @ifc-lite/geometry referencing geometry.worker.ts (TypeScript source)
+      // in new URL() calls — only the compiled .js exists in the dist.
+      // Vite special-cases `new URL(path, import.meta.url)` before normal resolution,
+      // so we need to rewrite the source code directly.
+      name: "fix-ifc-lite-worker-url",
+      enforce: "pre",
+      transform(code, id) {
+        if (id.includes("@ifc-lite/geometry") && code.includes("geometry.worker.ts")) {
+          return {
+            code: code.replaceAll("geometry.worker.ts", "geometry.worker.js"),
+            map: null,
+          };
+        }
+      },
+    },
     {
       name: "serve-out-dir",
       configureServer(server) {
@@ -61,5 +80,16 @@ export default defineConfig({
       },
     },
   ],
+  build: {
+    rollupOptions: {
+      input: {
+        main: resolve(import.meta.dirname, "index.html"),
+        benchmark: resolve(import.meta.dirname, "benchmark.html"),
+      },
+    },
+  },
+  optimizeDeps: {
+    exclude: ["@ifc-lite/wasm"],
+  },
   assetsInclude: ["**/*.wasm", "**/*.ifc"],
 });

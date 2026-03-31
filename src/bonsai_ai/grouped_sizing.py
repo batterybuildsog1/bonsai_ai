@@ -34,7 +34,20 @@ class GroupedSectionSizer:
         iteration_history: List[Dict[str, Any]] = []
         last_result: AnalysisResult | None = None
         last_group_summary: Dict[str, Any] = {}
+        last_evaluation: Dict[str, Dict[str, Any]] = {}
         sizing_catalog = package.physical_model.metadata.get("system_catalog_data") or {}
+        # Perf: track whether groups advanced on the last iteration to skip redundant final solve
+        last_iteration_advanced = False
+
+        # Perf: pre-index which element indices belong to which sizing group.
+        # Group membership (by sizing_group_id) is stable across iterations -- only
+        # section assignments change. This avoids rebuilding the full group index
+        # on every _evaluate_groups call.
+        _group_element_indices: Dict[str, List[int]] = {}
+        for _idx, _el in enumerate(package.structural_source_model.elements):
+            _gid = str(_el.metadata.get("catalog_selection", {}).get("sizing_group_id") or "")
+            if _gid:
+                _group_element_indices.setdefault(_gid, []).append(_idx)
 
         for iteration_index in range(self.max_iterations):
             trial_source = deepcopy(package.structural_source_model)
@@ -52,7 +65,7 @@ class GroupedSectionSizer:
             iteration_dir.mkdir(parents=True, exist_ok=True)
             result = self.solver_backend.analyze(package.analysis_request, trial_package, iteration_dir)
             group_summary = self._group_demand_summary(analytical_model, result.summary.get("member_demands", {}))
-            evaluation = self._evaluate_groups(trial_source, analytical_model, group_summary)
+            evaluation = self._evaluate_groups(trial_source, analytical_model, group_summary, group_element_indices=_group_element_indices)
             iteration_history.append(
                 {
                     "iteration": iteration_index + 1,
@@ -63,17 +76,26 @@ class GroupedSectionSizer:
             )
             last_result = result
             last_group_summary = group_summary
+            last_evaluation = evaluation
             package.structural_source_model = trial_source
             package.analytical_model = analytical_model
-            if not self._advance_failing_groups(group_state, evaluation):
+            last_iteration_advanced = self._advance_failing_groups(group_state, evaluation)
+            if not last_iteration_advanced:
                 break
 
         if last_result is None:
             raise RuntimeError("Grouped sizing did not produce a solver result")
 
-        final_result = self.solver_backend.analyze(package.analysis_request, package, output_dir)
-        final_group_summary = self._group_demand_summary(package.analytical_model, final_result.summary.get("member_demands", {}))
-        final_evaluation = self._evaluate_groups(package.structural_source_model, package.analytical_model, final_group_summary)
+        # Perf: skip redundant final solver run when no groups advanced in the last iteration
+        # (the result would be identical to the last iteration's result)
+        if last_iteration_advanced:
+            final_result = self.solver_backend.analyze(package.analysis_request, package, output_dir)
+            final_group_summary = self._group_demand_summary(package.analytical_model, final_result.summary.get("member_demands", {}))
+            final_evaluation = self._evaluate_groups(package.structural_source_model, package.analytical_model, final_group_summary, group_element_indices=_group_element_indices)
+        else:
+            final_result = last_result
+            final_group_summary = last_group_summary
+            final_evaluation = last_evaluation
         unity_checks = {
             group_id: float(data["unity"])
             for group_id, data in final_evaluation.items()
@@ -187,14 +209,21 @@ class GroupedSectionSizer:
                 entry["max_abs"][key] = max(float(entry["max_abs"].get(key) or 0.0), abs(float(value)))
         return groups
 
-    def _evaluate_groups(self, source_model, analytical_model, group_demands: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    def _evaluate_groups(self, source_model, analytical_model, group_demands: Dict[str, Dict[str, Any]], *, group_element_indices: Dict[str, List[int]] | None = None) -> Dict[str, Dict[str, Any]]:
         section_lookup = {section.id: section for section in analytical_model.sections}
         material_lookup = {material.id: material for material in analytical_model.materials}
-        group_elements: Dict[str, List[Any]] = {}
-        for element in source_model.elements:
-            group_id = str(element.metadata.get("catalog_selection", {}).get("sizing_group_id") or "")
-            if group_id:
-                group_elements.setdefault(group_id, []).append(element)
+        # Perf: use pre-indexed group membership to avoid scanning all elements every call
+        if group_element_indices is not None:
+            group_elements: Dict[str, List[Any]] = {
+                gid: [source_model.elements[i] for i in indices]
+                for gid, indices in group_element_indices.items()
+            }
+        else:
+            group_elements: Dict[str, List[Any]] = {}
+            for element in source_model.elements:
+                group_id = str(element.metadata.get("catalog_selection", {}).get("sizing_group_id") or "")
+                if group_id:
+                    group_elements.setdefault(group_id, []).append(element)
 
         evaluation: Dict[str, Dict[str, Any]] = {}
         for group_id, elements in group_elements.items():

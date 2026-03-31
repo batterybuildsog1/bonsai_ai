@@ -29,6 +29,8 @@ class StructuralSourceModelBuilder:
             raise ValueError("physical_model must be present before structural source build")
 
         self._semantic_model_index = self._index_semantic_model(package.physical_model.semantic_model)
+        # Perf: cache _semantic_meta() results per action name to avoid 6x redundant lookups per element
+        self._semantic_meta_cache: Dict[str, Dict[str, Any]] = {}
         materials: Dict[str, MaterialSpec] = {}
         sections: Dict[str, SectionSpec] = {}
         elements: List[StructuralSourceElement] = []
@@ -142,6 +144,11 @@ class StructuralSourceModelBuilder:
         return {}
 
     def _semantic_meta(self, action: Dict[str, Any]) -> Dict[str, Any]:
+        # Perf: return cached result if already computed for this action name
+        cache_key = str(action.get("name") or id(action))
+        cached = self._semantic_meta_cache.get(cache_key)
+        if cached is not None:
+            return cached
         semantics = dict(action.get("semantics") or {}) if isinstance(action.get("semantics"), dict) else {}
         record = self._semantic_record(action)
         record_action = record.get("action")
@@ -157,6 +164,7 @@ class StructuralSourceModelBuilder:
         branch_path = record.get("branch_path")
         if branch_path and "group_path" not in semantics:
             semantics["group_path"] = list(branch_path)
+        self._semantic_meta_cache[cache_key] = semantics
         return semantics
 
     def _semantic_id(self, action: Dict[str, Any]) -> str:

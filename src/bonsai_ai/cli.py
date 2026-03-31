@@ -2,11 +2,79 @@ from __future__ import annotations
 
 import argparse
 import json
-from typing import Sequence
+from typing import Dict, List, Sequence, Tuple
 
 from .ifc_author import AuthoringError, IfcAuthor
-from .planner import DEFAULT_MODELS, DEFAULT_ENV_VARS, create_plan
+from .planner import DEFAULT_MODELS, DEFAULT_ENV_VARS, PlannedToolCall, create_plan
 
+
+# ---------------------------------------------------------------------------
+# Failure classification for smart replanning
+# ---------------------------------------------------------------------------
+
+# Keywords in error messages that indicate a structural / hierarchy problem.
+# These failures cannot be repaired in isolation -- they require a full replan
+# so the planner can reconsider the project structure.
+_STRUCTURAL_FAILURE_KEYWORDS = (
+    "storey",
+    "project",
+    "hierarchy",
+    "IfcProject",
+    "IfcBuildingStorey",
+    "IfcBuilding",
+    "IfcSite",
+    "no site",
+    "no building",
+)
+
+
+def _is_structural_failure(error_message: str) -> bool:
+    """Return True if the error indicates a structural/hierarchy problem
+    that cannot be repaired by a targeted fix and needs a full replan."""
+    lower = error_message.lower()
+    return any(kw.lower() in lower for kw in _STRUCTURAL_FAILURE_KEYWORDS)
+
+
+def _build_repair_prompt(
+    succeeded: List[Tuple[PlannedToolCall, str]],
+    failed: List[Tuple[PlannedToolCall, str]],
+    scene_summary: str,
+) -> str:
+    """Build a targeted repair prompt that asks the planner to fix ONLY the
+    failed tool calls without re-creating elements that already exist."""
+    parts: List[str] = []
+
+    # Describe what failed and why
+    parts.append("The following tool calls failed and need repair:")
+    for call, error in failed:
+        parts.append(
+            f"  - {call.name}({json.dumps(call.arguments, sort_keys=True)}): {error}"
+        )
+
+    # Describe what already succeeded (so the planner does not duplicate)
+    if succeeded:
+        parts.append("")
+        parts.append("The following tool calls succeeded -- do NOT recreate these elements:")
+        for call, msg in succeeded:
+            parts.append(f"  - {call.name}: {msg}")
+
+    # Current scene state
+    parts.append("")
+    parts.append(f"The scene already contains:\n{scene_summary}")
+
+    # Clear instruction
+    parts.append("")
+    parts.append(
+        "Fix ONLY the failures listed above. Use corrected coordinates, "
+        "dimensions, or names as needed. Do not recreate existing elements."
+    )
+
+    return "\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Main entry point
+# ---------------------------------------------------------------------------
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Prompt-driven IFC authoring for Bonsai.")
@@ -22,49 +90,162 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     author = IfcAuthor(args.output)
-    all_calls = []
+    all_calls: List[PlannedToolCall] = []
     all_results = []
-    progress_lines = []
-    seen_rounds = set()
-    failed_calls = set()
+    progress_lines: List[str] = []
+    seen_rounds: set = set()
+    failed_calls: set = set()
     max_rounds = 12
 
-    for _ in range(max_rounds):
-        plan = create_plan(
-            provider=args.provider,
-            model=args.model,
-            api_key_env=args.api_key_env or DEFAULT_ENV_VARS[args.provider],
-            user_prompt=args.prompt,
-            scene_summary=author.scene_summary(),
-            progress_summary="\n".join(progress_lines),
-        )
+    # Track per-element repair attempts.  Key = (tool_name, element_name_or_sig).
+    # If an element fails targeted repair twice, we escalate to full replan.
+    repair_attempt_counts: Dict[str, int] = {}
+
+    # After executing a round, this may be set to a targeted repair prompt
+    # that should be used *instead of* the full user prompt on the next
+    # iteration.  It is consumed (reset to None) once used.
+    pending_repair_prompt: str | None = None
+
+    # True once at least one failure has occurred (used to decide whether to
+    # annotate progress_lines with REPLAN markers).
+    any_failure_seen = False
+
+    for round_num in range(max_rounds):
+        # ------------------------------------------------------------------
+        # Plan: either a targeted repair or a full (re)plan
+        # ------------------------------------------------------------------
+        if pending_repair_prompt is not None:
+            # REPAIR round -- send a focused prompt
+            repair_prompt = pending_repair_prompt
+            pending_repair_prompt = None  # consume it
+
+            progress_lines.append(f"REPAIR: attempting targeted repair (round {round_num + 1})")
+
+            plan = create_plan(
+                provider=args.provider,
+                model=args.model,
+                api_key_env=args.api_key_env or DEFAULT_ENV_VARS[args.provider],
+                user_prompt=repair_prompt,
+                scene_summary=author.scene_summary(),
+                progress_summary="\n".join(progress_lines),
+            )
+        else:
+            # FULL (re)plan -- the normal path
+            if round_num > 0 and any_failure_seen:
+                # Log that we are doing a full replan (only after failures --
+                # in the zero-failure case the progress_lines stay identical
+                # to the original behaviour).
+                progress_lines.append(f"REPLAN: full round {round_num + 1}")
+
+            plan = create_plan(
+                provider=args.provider,
+                model=args.model,
+                api_key_env=args.api_key_env or DEFAULT_ENV_VARS[args.provider],
+                user_prompt=args.prompt,
+                scene_summary=author.scene_summary(),
+                progress_summary="\n".join(progress_lines),
+            )
+
         if not plan.tool_calls:
             break
 
-        round_signature = tuple((call.name, json.dumps(call.arguments, sort_keys=True)) for call in plan.tool_calls)
+        round_signature = tuple(
+            (call.name, json.dumps(call.arguments, sort_keys=True))
+            for call in plan.tool_calls
+        )
         if round_signature in seen_rounds:
-            raise RuntimeError("Planner repeated a previous round of tool calls before completing the request.")
+            raise RuntimeError(
+                "Planner repeated a previous round of tool calls before completing the request."
+            )
         seen_rounds.add(round_signature)
 
         all_calls.extend(plan.tool_calls)
         if args.dry_run:
             progress_lines.extend(
-                f"{call.name}: {json.dumps(call.arguments, sort_keys=True)}" for call in plan.tool_calls
+                f"{call.name}: {json.dumps(call.arguments, sort_keys=True)}"
+                for call in plan.tool_calls
             )
             continue
+
+        # ------------------------------------------------------------------
+        # Execute the tool calls, tracking successes and failures
+        # ------------------------------------------------------------------
+        succeeded: List[Tuple[PlannedToolCall, str]] = []
+        failed_this_round: List[Tuple[PlannedToolCall, str]] = []
+        has_structural_failure = False
 
         for call in plan.tool_calls:
             try:
                 result = author.apply_tool_call(call.name, call.arguments)
                 all_results.append(result)
                 progress_lines.append(f"{result.tool_name}: {result.message}")
+                succeeded.append((call, result.message))
             except AuthoringError as exc:
+                error_msg = str(exc)
                 failed_signature = (call.name, json.dumps(call.arguments, sort_keys=True))
                 if failed_signature in failed_calls:
-                    raise RuntimeError(f"Planner repeated a failing tool call: {call.name} -> {exc}") from exc
+                    raise RuntimeError(
+                        f"Planner repeated a failing tool call: {call.name} -> {exc}"
+                    ) from exc
                 failed_calls.add(failed_signature)
+
+                if _is_structural_failure(error_msg):
+                    has_structural_failure = True
+
+                failed_this_round.append((call, error_msg))
                 progress_lines.append(
-                    f"FAILED {call.name}: {exc}. Replan from the updated scene summary and avoid this mistake."
+                    f"FAILED {call.name}: {exc}. "
+                    "Replan from the updated scene summary and avoid this mistake."
+                )
+
+        # ------------------------------------------------------------------
+        # Smart replanning decision
+        # ------------------------------------------------------------------
+        if failed_this_round:
+            any_failure_seen = True
+            # Decide: targeted repair or full replan?
+            #
+            # Escalate to full replan when:
+            #   1. Any failure is structural (hierarchy problem)
+            #   2. ALL calls in the round failed (nothing to anchor the repair)
+            #   3. Any element has already been repaired twice (stuck in a loop)
+            should_full_replan = has_structural_failure or not succeeded
+
+            if not should_full_replan:
+                # Check per-element repair attempt limits
+                for call, _error in failed_this_round:
+                    element_key = call.arguments.get("name", json.dumps(call.arguments, sort_keys=True))
+                    repair_key = f"{call.name}:{element_key}"
+                    count = repair_attempt_counts.get(repair_key, 0)
+                    if count >= 2:
+                        # This element has failed repair twice -- escalate
+                        should_full_replan = True
+                        progress_lines.append(
+                            f"REPAIR ESCALATION: {repair_key} failed repair {count} time(s), "
+                            "escalating to full replan"
+                        )
+                        break
+                    repair_attempt_counts[repair_key] = count + 1
+
+            if should_full_replan:
+                # Fall through to next iteration which will do a full replan
+                # (pending_repair_prompt is already None)
+                if has_structural_failure:
+                    progress_lines.append(
+                        "REPLAN REASON: structural/hierarchy failure detected, "
+                        "skipping targeted repair"
+                    )
+                elif not succeeded:
+                    progress_lines.append(
+                        "REPLAN REASON: all tool calls in the round failed, "
+                        "skipping targeted repair"
+                    )
+            else:
+                # Set up a targeted repair for the next iteration
+                pending_repair_prompt = _build_repair_prompt(
+                    succeeded=succeeded,
+                    failed=failed_this_round,
+                    scene_summary=author.scene_summary(),
                 )
 
     else:

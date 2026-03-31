@@ -1,0 +1,414 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>IFC Engine Benchmark — web-ifc vs IFC-Lite</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; }
+    body {
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      background: #0a0e14;
+      color: #c5cdd9;
+      padding: 24px;
+      line-height: 1.5;
+    }
+    h1 { color: #e2e8f0; font-size: 20px; margin-bottom: 4px; }
+    .subtitle { color: #64748b; font-size: 13px; margin-bottom: 24px; }
+    .controls {
+      display: flex; gap: 12px; align-items: center;
+      margin-bottom: 24px; flex-wrap: wrap;
+    }
+    .controls label { color: #94a3b8; font-size: 13px; }
+    .controls input[type="text"] {
+      background: #1e293b; border: 1px solid #334155; color: #e2e8f0;
+      padding: 6px 12px; border-radius: 6px; font-size: 13px; width: 400px;
+    }
+    button {
+      background: #3b82f6; color: white; border: none; padding: 8px 16px;
+      border-radius: 6px; font-size: 13px; font-weight: 500; cursor: pointer;
+      transition: background 0.15s;
+    }
+    button:hover { background: #2563eb; }
+    button:disabled { background: #334155; cursor: not-allowed; }
+
+    .results {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
+      margin-top: 16px;
+    }
+    .result-card {
+      background: #111827; border: 1px solid #1e293b;
+      border-radius: 10px; padding: 20px;
+    }
+    .result-card h2 {
+      font-size: 15px; color: #e2e8f0; margin-bottom: 12px;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .result-card h2 .badge {
+      font-size: 11px; padding: 2px 8px; border-radius: 4px;
+      font-weight: 600; text-transform: uppercase;
+    }
+    .badge--legacy { background: #7c3aed22; color: #a78bfa; }
+    .badge--lite { background: #06b6d422; color: #67e8f9; }
+    .metric-row {
+      display: flex; justify-content: space-between;
+      padding: 6px 0; border-bottom: 1px solid #1e293b1a;
+      font-size: 13px;
+    }
+    .metric-row:last-child { border-bottom: none; }
+    .metric-label { color: #94a3b8; }
+    .metric-value { color: #e2e8f0; font-variant-numeric: tabular-nums; font-weight: 500; }
+    .metric-value.faster { color: #34d399; }
+    .metric-value.slower { color: #f87171; }
+
+    .comparison {
+      grid-column: 1 / -1;
+      background: #111827; border: 1px solid #1e293b;
+      border-radius: 10px; padding: 20px;
+    }
+    .comparison h2 { font-size: 15px; color: #e2e8f0; margin-bottom: 12px; }
+    .bar-chart { display: flex; flex-direction: column; gap: 10px; }
+    .bar-row { display: flex; align-items: center; gap: 12px; }
+    .bar-label { width: 100px; font-size: 12px; color: #94a3b8; text-align: right; }
+    .bar-track { flex: 1; height: 24px; background: #1e293b; border-radius: 4px; position: relative; overflow: hidden; display: flex; }
+    .bar-fill { height: 100%; border-radius: 4px; transition: width 0.5s ease; display: flex; align-items: center; padding: 0 8px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+    .bar-fill--legacy { background: #7c3aed55; color: #c4b5fd; }
+    .bar-fill--lite { background: #06b6d455; color: #a5f3fc; }
+
+    .log {
+      grid-column: 1 / -1;
+      background: #0d1117; border: 1px solid #1e293b;
+      border-radius: 10px; padding: 16px;
+      font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px;
+      max-height: 300px; overflow-y: auto;
+      white-space: pre-wrap; color: #8b949e;
+    }
+    .log .info { color: #58a6ff; }
+    .log .success { color: #3fb950; }
+    .log .warn { color: #d29922; }
+    .log .error { color: #f85149; }
+
+    .status {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: 13px; color: #94a3b8;
+    }
+    .spinner {
+      width: 14px; height: 14px; border: 2px solid #334155;
+      border-top-color: #3b82f6; border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <h1>IFC Engine Benchmark</h1>
+  <p class="subtitle">Compare web-ifc (legacy) vs IFC-Lite parsing and geometry performance</p>
+
+  <div class="controls">
+    <label>IFC file URL:</label>
+    <input type="text" id="ifc-url" value="/out/retail_terrace_concept/retail_terrace_concept.ifc">
+    <button id="run-btn" onclick="runBenchmark()">Run Benchmark</button>
+    <span id="status" class="status"></span>
+  </div>
+
+  <div class="results" id="results" style="display: none;">
+    <div class="result-card" id="card-legacy">
+      <h2>web-ifc <span class="badge badge--legacy">Legacy</span></h2>
+      <div id="metrics-legacy"></div>
+    </div>
+    <div class="result-card" id="card-lite">
+      <h2>IFC-Lite <span class="badge badge--lite">New</span></h2>
+      <div id="metrics-lite"></div>
+    </div>
+    <div class="comparison" id="comparison" style="display: none;">
+      <h2>Side-by-Side Comparison</h2>
+      <div class="bar-chart" id="bar-chart"></div>
+    </div>
+    <div class="log" id="log"></div>
+  </div>
+
+  <script type="module">
+    // Dynamic imports — these only load when the benchmark runs
+    // web-ifc and IFC-Lite must both be installed as dependencies
+
+    const logEl = document.getElementById("log");
+    const statusEl = document.getElementById("status");
+
+    function log(msg, cls = "") {
+      const line = document.createElement("div");
+      if (cls) line.className = cls;
+      line.textContent = `[${new Date().toISOString().slice(11, 23)}] ${msg}`;
+      logEl.appendChild(line);
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    function setStatus(msg) {
+      statusEl.innerHTML = msg ? `<span class="spinner"></span> ${msg}` : "";
+    }
+
+    function renderMetrics(containerId, data) {
+      const el = document.getElementById(containerId);
+      el.innerHTML = Object.entries(data)
+        .map(([key, val]) => `
+          <div class="metric-row">
+            <span class="metric-label">${key}</span>
+            <span class="metric-value">${val}</span>
+          </div>
+        `).join("");
+    }
+
+    function renderComparison(legacyTimings, liteTimings) {
+      const container = document.getElementById("comparison");
+      const chart = document.getElementById("bar-chart");
+      container.style.display = "";
+
+      const phases = [
+        { label: "Parse", legacyKey: "parseMs", liteKey: "parseMs" },
+        { label: "Geometry", legacyKey: "geometryMs", liteKey: "geometryMs" },
+        { label: "Index", legacyKey: "indexMs", liteKey: "indexMs" },
+        { label: "Total", legacyKey: "totalMs", liteKey: "totalMs" },
+      ];
+
+      chart.innerHTML = phases.map(({ label, legacyKey, liteKey }) => {
+        const lv = legacyTimings[legacyKey] || 0;
+        const rv = liteTimings[liteKey] || 0;
+        const maxVal = Math.max(lv, rv, 1);
+        const lPct = (lv / maxVal * 100).toFixed(1);
+        const rPct = (rv / maxVal * 100).toFixed(1);
+
+        return `
+          <div class="bar-row">
+            <span class="bar-label">${label}</span>
+            <div class="bar-track">
+              <div class="bar-fill bar-fill--legacy" style="width: ${lPct}%">${lv.toFixed(0)}ms</div>
+            </div>
+            <div class="bar-track">
+              <div class="bar-fill bar-fill--lite" style="width: ${rPct}%">${rv.toFixed(0)}ms</div>
+            </div>
+          </div>
+        `;
+      }).join("");
+    }
+
+    // ---- Benchmark: web-ifc (legacy) ----
+    async function benchmarkWebIfc(buffer) {
+      log("Starting web-ifc benchmark...", "info");
+      const timings = {};
+
+      const WebIFC = await import("web-ifc");
+      const ifcAPI = new WebIFC.IfcAPI();
+
+      // WASM path: public/web-ifc.wasm is served at root
+      ifcAPI.SetWasmPath("/");
+      await ifcAPI.Init(null, true);
+
+      // Parse
+      const t1 = performance.now();
+      const modelID = ifcAPI.OpenModel(new Uint8Array(buffer));
+      timings.parseMs = performance.now() - t1;
+      log(`  Parse: ${timings.parseMs.toFixed(0)}ms`, "success");
+
+      // Geometry
+      const t2 = performance.now();
+      let meshCount = 0;
+      ifcAPI.StreamAllMeshes(modelID, (flatMesh) => {
+        const placedGeometries = flatMesh.geometries;
+        for (let i = 0; i < placedGeometries.size(); i++) {
+          const pg = placedGeometries.get(i);
+          const geomData = ifcAPI.GetGeometry(modelID, pg.geometryExpressID);
+          const verts = ifcAPI.GetVertexArray(geomData.GetVertexData(), geomData.GetVertexDataSize());
+          const indices = ifcAPI.GetIndexArray(geomData.GetIndexData(), geomData.GetIndexDataSize());
+          if (verts.length > 0 && indices.length > 0) meshCount++;
+          geomData.delete();
+        }
+      });
+      timings.geometryMs = performance.now() - t2;
+      log(`  Geometry: ${timings.geometryMs.toFixed(0)}ms (${meshCount} meshes)`, "success");
+
+      // Index elements
+      const t3 = performance.now();
+      let elementCount = 0;
+      const typeConstants = [
+        WebIFC.IFCWALL, WebIFC.IFCWALLSTANDARDCASE,
+        WebIFC.IFCSLAB, WebIFC.IFCBEAM, WebIFC.IFCCOLUMN,
+        WebIFC.IFCDOOR, WebIFC.IFCWINDOW, WebIFC.IFCROOF,
+        WebIFC.IFCSTAIR, WebIFC.IFCSTAIRFLIGHT,
+        WebIFC.IFCRAILING, WebIFC.IFCPLATE, WebIFC.IFCMEMBER,
+        WebIFC.IFCCURTAINWALL, WebIFC.IFCCOVERING,
+        WebIFC.IFCFURNISHINGELEMENT, WebIFC.IFCBUILDINGELEMENTPROXY,
+        WebIFC.IFCBUILDINGSTOREY, WebIFC.IFCSPACE,
+      ].filter(Boolean);
+
+      for (const ifcType of typeConstants) {
+        try {
+          const lines = ifcAPI.GetLineIDsWithType(modelID, ifcType);
+          for (let i = 0; i < lines.size(); i++) {
+            try { ifcAPI.GetLine(modelID, lines.get(i)); elementCount++; } catch (_) {}
+          }
+        } catch (_) {}
+      }
+      timings.indexMs = performance.now() - t3;
+      log(`  Index: ${timings.indexMs.toFixed(0)}ms (${elementCount} elements)`, "success");
+
+      timings.totalMs = timings.parseMs + timings.geometryMs + timings.indexMs;
+      timings.meshCount = meshCount;
+      timings.elementCount = elementCount;
+
+      // Cleanup
+      ifcAPI.CloseModel(modelID);
+
+      log(`  Total: ${timings.totalMs.toFixed(0)}ms`, "success");
+      return timings;
+    }
+
+    // ---- Benchmark: IFC-Lite ----
+    async function benchmarkIfcLite(buffer) {
+      log("Starting IFC-Lite benchmark...", "info");
+      const timings = {};
+
+      const { GeometryProcessor } = await import("@ifc-lite/geometry");
+      const { IfcParser } = await import("@ifc-lite/parser");
+      const { extractEntityAttributesOnDemand } = await import("@ifc-lite/parser");
+      const { IfcQuery } = await import("@ifc-lite/query");
+
+      // Init geometry processor
+      const processor = new GeometryProcessor();
+      await processor.init();
+
+      // Parse
+      const t1 = performance.now();
+      const parser = new IfcParser();
+      const dataStore = await parser.parseColumnar(buffer);
+      timings.parseMs = performance.now() - t1;
+      log(`  Parse: ${timings.parseMs.toFixed(0)}ms (${dataStore.entityCount} entities, ${dataStore.schemaVersion})`, "success");
+
+      // Geometry
+      const t2 = performance.now();
+      const uint8 = new Uint8Array(buffer);
+      const result = await processor.process(uint8);
+      timings.geometryMs = performance.now() - t2;
+      const meshCount = result.meshes.length;
+      log(`  Geometry: ${timings.geometryMs.toFixed(0)}ms (${meshCount} meshes)`, "success");
+
+      // Index elements (query storeys + extract attributes for a sample)
+      const t3 = performance.now();
+      let elementCount = 0;
+      try {
+        const query = new IfcQuery(dataStore);
+        const storeys = query.storeys().toArray();
+        // Count elements with geometry
+        for (const mesh of result.meshes) {
+          try {
+            extractEntityAttributesOnDemand(dataStore, mesh.expressId, uint8);
+            elementCount++;
+          } catch (_) { elementCount++; }
+        }
+      } catch (err) {
+        log(`  Index query error: ${err.message}`, "warn");
+        elementCount = meshCount;
+      }
+      timings.indexMs = performance.now() - t3;
+      log(`  Index: ${timings.indexMs.toFixed(0)}ms (${elementCount} elements)`, "success");
+
+      timings.totalMs = timings.parseMs + timings.geometryMs + timings.indexMs;
+      timings.meshCount = meshCount;
+      timings.elementCount = elementCount;
+
+      log(`  Total: ${timings.totalMs.toFixed(0)}ms`, "success");
+      return timings;
+    }
+
+    // ---- Main benchmark runner ----
+    window.runBenchmark = async function runBenchmark() {
+      const btn = document.getElementById("run-btn");
+      const resultsEl = document.getElementById("results");
+      btn.disabled = true;
+      resultsEl.style.display = "";
+      logEl.innerHTML = "";
+
+      const url = document.getElementById("ifc-url").value;
+
+      try {
+        // Fetch IFC file
+        setStatus("Fetching IFC file...");
+        log(`Fetching ${url}...`, "info");
+        const t0 = performance.now();
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        const buffer = await response.arrayBuffer();
+        const fetchMs = performance.now() - t0;
+        const sizeMB = (buffer.byteLength / 1024 / 1024).toFixed(2);
+        log(`Fetched ${sizeMB} MB in ${fetchMs.toFixed(0)}ms`, "success");
+
+        // Run web-ifc benchmark
+        setStatus("Running web-ifc benchmark...");
+        let legacyTimings = null;
+        try {
+          legacyTimings = await benchmarkWebIfc(buffer);
+        } catch (err) {
+          log(`web-ifc benchmark failed: ${err.message}`, "error");
+          legacyTimings = { parseMs: 0, geometryMs: 0, indexMs: 0, totalMs: 0, meshCount: 0, elementCount: 0, error: err.message };
+        }
+
+        // Run IFC-Lite benchmark
+        setStatus("Running IFC-Lite benchmark...");
+        let liteTimings = null;
+        try {
+          liteTimings = await benchmarkIfcLite(buffer);
+        } catch (err) {
+          log(`IFC-Lite benchmark failed: ${err.message}`, "error");
+          liteTimings = { parseMs: 0, geometryMs: 0, indexMs: 0, totalMs: 0, meshCount: 0, elementCount: 0, error: err.message };
+        }
+
+        // Display results
+        setStatus("");
+        log("", "");
+        log("=== RESULTS ===", "info");
+
+        if (legacyTimings.error) {
+          renderMetrics("metrics-legacy", { Error: legacyTimings.error });
+        } else {
+          renderMetrics("metrics-legacy", {
+            "Parse time": `${legacyTimings.parseMs.toFixed(0)}ms`,
+            "Geometry time": `${legacyTimings.geometryMs.toFixed(0)}ms`,
+            "Index time": `${legacyTimings.indexMs.toFixed(0)}ms`,
+            "Total time": `${legacyTimings.totalMs.toFixed(0)}ms`,
+            "Meshes": legacyTimings.meshCount,
+            "Elements": legacyTimings.elementCount,
+          });
+        }
+
+        if (liteTimings.error) {
+          renderMetrics("metrics-lite", { Error: liteTimings.error });
+        } else {
+          renderMetrics("metrics-lite", {
+            "Parse time": `${liteTimings.parseMs.toFixed(0)}ms`,
+            "Geometry time": `${liteTimings.geometryMs.toFixed(0)}ms`,
+            "Index time": `${liteTimings.indexMs.toFixed(0)}ms`,
+            "Total time": `${liteTimings.totalMs.toFixed(0)}ms`,
+            "Meshes": liteTimings.meshCount,
+            "Elements": liteTimings.elementCount,
+          });
+        }
+
+        // Comparison chart
+        if (!legacyTimings.error && !liteTimings.error) {
+          renderComparison(legacyTimings, liteTimings);
+
+          const speedup = legacyTimings.totalMs / Math.max(liteTimings.totalMs, 1);
+          log(`IFC-Lite is ${speedup.toFixed(2)}x ${speedup > 1 ? "faster" : "slower"} overall`, speedup > 1 ? "success" : "warn");
+          log(`  Parse: ${(legacyTimings.parseMs / Math.max(liteTimings.parseMs, 1)).toFixed(2)}x`, "info");
+          log(`  Geometry: ${(legacyTimings.geometryMs / Math.max(liteTimings.geometryMs, 1)).toFixed(2)}x`, "info");
+          log(`  Index: ${(legacyTimings.indexMs / Math.max(liteTimings.indexMs, 1)).toFixed(2)}x`, "info");
+        }
+
+      } catch (err) {
+        log(`Benchmark failed: ${err.message}`, "error");
+        setStatus("");
+      }
+
+      btn.disabled = false;
+    };
+  </script>
+</body>
+</html>

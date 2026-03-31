@@ -169,16 +169,26 @@ class AnthropicProvider(BaseProvider):
     endpoint = "https://api.anthropic.com/v1/messages"
 
     def generate_plan(self) -> Dict[str, Any]:
+        # Anthropic prompt caching (GA): mark the system prompt and last tool
+        # with cache_control so that repeated planning rounds reuse cached
+        # prefix tokens, cutting input-token cost by ~90% and latency by ~85%.
         payload = {
             "model": self.model,
             "max_tokens": 4096,
-            "system": self.req.system_prompt,
+            "system": [
+                {
+                    "type": "text",
+                    "text": self.req.system_prompt,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
             "tools": [
                 {
                     "name": "emit_bonsai_action_plan",
                     "description": "Return a Bonsai action plan that uses only the supported BIM primitives.",
                     "input_schema": self.schema,
                     "strict": True,
+                    "cache_control": {"type": "ephemeral"},
                 }
             ],
             "tool_choice": {"type": "tool", "name": "emit_bonsai_action_plan"},

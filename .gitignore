@@ -16,3 +16,7 @@ node_modules/
 .DS_Store
 viewer/dist/
 viewer/public/web-ifc.wasm
+viewer/public/ifc-lite_bg.wasm
+.venv*/
+mojo_modules/*.so
+mojo_modules/__pycache__/

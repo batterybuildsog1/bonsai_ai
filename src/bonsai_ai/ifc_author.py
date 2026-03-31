@@ -41,6 +41,9 @@ class IfcAuthor:
     def __init__(self, path: str):
         self.path = path
         self.model = ifcopenshell.open(path) if os.path.exists(path) else ifcopenshell.api.project.create_file(version="IFC4")
+        # Perf: cache hierarchy check and body context to avoid repeated entity scans
+        self._hierarchy_ready = False
+        self._cached_body_context = None
         self._ensure_contexts()
 
     def _ensure_contexts(self) -> None:
@@ -57,15 +60,21 @@ class IfcAuthor:
                 target_view="MODEL_VIEW",
                 parent=model3d,
             )
+            # Perf: invalidate body_context cache after creating new context
+            self._cached_body_context = None
 
     @property
     def body_context(self):
+        # Perf: cache body_context to avoid repeated linear scans of IFC entities
+        if self._cached_body_context is not None:
+            return self._cached_body_context
         for context in self.model.by_type("IfcGeometricRepresentationSubContext"):
             if (
                 getattr(context, "ContextType", None) == "Model"
                 and getattr(context, "ContextIdentifier", None) == "Body"
                 and getattr(context, "TargetView", None) == "MODEL_VIEW"
             ):
+                self._cached_body_context = context
                 return context
         return None
 
@@ -103,8 +112,12 @@ class IfcAuthor:
         site_name: str = "Default Site",
         building_name: str = "Main Building",
     ) -> None:
+        # Perf: skip repeated linear scan if hierarchy was already confirmed
+        if self._hierarchy_ready:
+            return
         if self.model.by_type("IfcProject"):
             self._ensure_contexts()
+            self._hierarchy_ready = True
             return
         project = ifcopenshell.api.root.create_entity(self.model, ifc_class="IfcProject", name=project_name)
         length_unit = ifcopenshell.api.unit.add_si_unit(self.model, unit_type="LENGTHUNIT")
@@ -123,6 +136,7 @@ class IfcAuthor:
         building = ifcopenshell.api.root.create_entity(self.model, ifc_class="IfcBuilding", name=building_name)
         ifcopenshell.api.aggregate.assign_object(self.model, products=[site], relating_object=project)
         ifcopenshell.api.aggregate.assign_object(self.model, products=[building], relating_object=site)
+        self._hierarchy_ready = True
 
     def _find_by_name(self, ifc_class: str, name: str):
         for entity in self.model.by_type(ifc_class):
