@@ -224,14 +224,19 @@ export async function setupScene() {
   // Hemisphere light (sky blue from above, warm earth bounce from below)
   scene.add(new THREE.HemisphereLight(0xb1e1ff, 0xb97a20, 0.3));
 
-  // --- Ground plane (shadow-receiving) ---
+  // --- Ground plane (visible green site + shadow-receiving) ---
   {
     const groundGeo = new THREE.PlaneGeometry(400, 400);
-    const groundMat = new THREE.ShadowMaterial({ opacity: 0.18 });
+    const groundMat = new THREE.MeshStandardMaterial({
+      color: 0x2d5a27,  // dark green grass
+      roughness: 0.9,
+      metalness: 0.0,
+    });
     const ground = new THREE.Mesh(groundGeo, groundMat);
     ground.rotation.x = -Math.PI / 2;
     ground.position.y = -0.01; // slightly below origin to avoid z-fighting
     ground.receiveShadow = true;
+    ground.userData.isGroundPlane = true; // tag for fitAll repositioning
     scene.add(ground);
   }
 
@@ -602,7 +607,24 @@ function meshDataToThreeMesh(meshData) {
     });
   }
 
+  // Window depth-buffer fix: transparent windows with depthWrite:false lose the
+  // depth test against the opaque wall-void interior, rendering as dark holes.
+  // Force depthWrite + polygonOffset so the glass wins against the wall surfaces.
+  if (ifcType === 'IfcWindow' || ifcType === 'IfcWindowStandardCase') {
+    material = material.clone(); // don't mutate shared type material
+    material.depthWrite = true;
+    material.polygonOffset = true;
+    material.polygonOffsetFactor = -1;
+    material.polygonOffsetUnits = -1;
+  }
+
   const mesh = new THREE.Mesh(geometry, material);
+
+  // Window meshes render after walls (opaque pass) to ensure glass is visible
+  if (ifcType === 'IfcWindow' || ifcType === 'IfcWindowStandardCase') {
+    mesh.renderOrder = 1;
+  }
+
   mesh.userData.expressId = meshData.expressId;
   // Also set expressID for backward compat with legacy inspector/app code
   mesh.userData.expressID = meshData.expressId;
@@ -742,8 +764,10 @@ function fitAll() {
   // Move ground plane and grid to the model's base
   const baseY = box.min.y - 0.01;
   scene.traverse((child) => {
-    if (child.isMesh && child.material?.isShadowMaterial) {
+    if (child.isMesh && child.userData.isGroundPlane) {
       child.position.y = baseY;
+      child.position.x = center.x;
+      child.position.z = center.z;
     }
     if (child.isGridHelper) {
       child.position.y = baseY;

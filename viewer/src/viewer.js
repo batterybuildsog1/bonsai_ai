@@ -88,6 +88,22 @@ export async function setupScene() {
 
   scene.add(new THREE.HemisphereLight(0xb1e1ff, 0x444444, 0.4));
 
+  // Ground plane (visible green site + shadow-receiving)
+  {
+    const groundGeo = new THREE.PlaneGeometry(400, 400);
+    const groundMat = new THREE.MeshStandardMaterial({
+      color: 0x2d5a27,  // dark green grass
+      roughness: 0.9,
+      metalness: 0.0,
+    });
+    const ground = new THREE.Mesh(groundGeo, groundMat);
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.y = -0.01;
+    ground.receiveShadow = true;
+    ground.userData.isGroundPlane = true;
+    scene.add(ground);
+  }
+
   // Grid
   const grid = new THREE.GridHelper(100, 100, 0x1a2a3a, 0x0d1a28);
   scene.add(grid);
@@ -303,6 +319,26 @@ export async function loadIFC(url) {
   // Index elements by reading IFC properties
   await indexElements();
 
+  // Window depth-buffer fix: now that we know IFC types from the index,
+  // apply depthWrite + polygonOffset to IfcWindow meshes so they render
+  // as translucent glass instead of dark voids.
+  for (const [eid, mesh] of meshes) {
+    const info = elementIndex.get(eid);
+    if (info && (info.type === 'IfcWindow' || info.type === 'IfcWindowStandardCase')) {
+      const mat = mesh.material.clone();
+      mat.transparent = true;
+      mat.opacity = 0.5;
+      mat.color.setHex(0xa8d8ea); // translucent blue glass
+      mat.depthWrite = true;
+      mat.polygonOffset = true;
+      mat.polygonOffsetFactor = -1;
+      mat.polygonOffsetUnits = -1;
+      mat.side = THREE.DoubleSide;
+      mesh.material = mat;
+      mesh.renderOrder = 1;
+    }
+  }
+
   // Fit camera to model
   fitAll();
 
@@ -462,6 +498,21 @@ function fitAll() {
 
   controls.target.copy(center);
   controls.update();
+
+  // Move ground plane and grid to the model's base
+  const baseY = box.min.y - 0.01;
+  scene.traverse((child) => {
+    if (child.isMesh && child.userData.isGroundPlane) {
+      child.position.y = baseY;
+      child.position.x = center.x;
+      child.position.z = center.z;
+    }
+    if (child.isGridHelper) {
+      child.position.y = baseY;
+      child.position.x = center.x;
+      child.position.z = center.z;
+    }
+  });
 }
 
 let wireframeMode = false;
