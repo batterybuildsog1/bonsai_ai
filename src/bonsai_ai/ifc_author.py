@@ -445,6 +445,41 @@ class IfcAuthor:
             ),
         )
 
+    @staticmethod
+    def _create_profile(model, *, width: float, depth: float,
+                        profile_type: str = "rectangular",
+                        web_thickness: float | None = None,
+                        flange_thickness: float | None = None,
+                        section_name: str | None = None):
+        """Create an IFC profile definition.
+
+        profile_type:
+            "rectangular" -> IfcRectangleProfileDef (default / fallback)
+            "I"           -> IfcIShapeProfileDef (W-shapes)
+        """
+        if profile_type == "I":
+            if web_thickness is None or flange_thickness is None:
+                raise AuthoringError(
+                    f"I-shape profile requires web_thickness and flange_thickness "
+                    f"(section: {section_name})"
+                )
+            return model.create_entity(
+                "IfcIShapeProfileDef",
+                ProfileType="AREA",
+                OverallWidth=float(width),
+                OverallDepth=float(depth),
+                WebThickness=float(web_thickness),
+                FlangeThickness=float(flange_thickness),
+                ProfileName=section_name,
+            )
+        else:
+            return model.create_entity(
+                "IfcRectangleProfileDef",
+                ProfileType="AREA",
+                XDim=float(width),
+                YDim=float(depth),
+            )
+
     def create_column(
         self,
         name: str,
@@ -456,6 +491,10 @@ class IfcAuthor:
         depth: float,
         height: float,
         rotation_deg: float = 0.0,
+        profile_type: str = "rectangular",
+        web_thickness: float | None = None,
+        flange_thickness: float | None = None,
+        section_name: str | None = None,
         **semantic_metadata: object,
     ) -> ExecutionResult:
         self._ensure_project_hierarchy()
@@ -470,11 +509,14 @@ class IfcAuthor:
         matrix[1, 1] = math.cos(angle)
         matrix[:, 3][0:3] = (float(x), float(y), float(base_z))
         ifcopenshell.api.geometry.edit_object_placement(self.model, product=column, matrix=matrix, is_si=True)
-        profile = self.model.create_entity(
-            "IfcRectangleProfileDef",
-            ProfileType="AREA",
-            XDim=float(width),
-            YDim=float(depth),
+        profile = self._create_profile(
+            self.model,
+            width=width,
+            depth=depth,
+            profile_type=profile_type,
+            web_thickness=web_thickness,
+            flange_thickness=flange_thickness,
+            section_name=section_name,
         )
         rep = ifcopenshell.api.geometry.add_profile_representation(
             self.model,
@@ -484,6 +526,7 @@ class IfcAuthor:
         )
         ifcopenshell.api.geometry.assign_representation(self.model, product=column, representation=rep)
         ifcopenshell.api.spatial.assign_container(self.model, products=[column], relating_structure=storey)
+        section_ref = section_name or f"column_{float(width):.4f}x{float(depth):.4f}"
         element_metadata = self._merged_metadata(
             {
                 "OriginX": float(x),
@@ -494,8 +537,10 @@ class IfcAuthor:
                 "Height": float(height),
                 "RotationDegrees": float(rotation_deg),
                 "StructuralKind": "column",
+                "ProfileType": profile_type,
+                "SectionName": section_name,
                 "MaterialRef": self._material_ref(semantic_metadata, "steel_default"),
-                "SectionRef": f"column_{float(width):.4f}x{float(depth):.4f}",
+                "SectionRef": section_ref,
             },
             semantic_metadata,
         )
@@ -504,7 +549,7 @@ class IfcAuthor:
             "create_column",
             column,
             name,
-            f"Created column {width:.2f}m x {depth:.2f}m",
+            f"Created column {section_ref} ({profile_type})",
             metadata=self._merged_metadata(
                 {
                 "storey_name": storey_name,
@@ -512,8 +557,10 @@ class IfcAuthor:
                 "depth": float(depth),
                 "height": float(height),
                 "rotation_deg": float(rotation_deg),
+                "profile_type": profile_type,
+                "section_name": section_name,
                 "material_ref": self._material_ref(semantic_metadata, "steel_default"),
-                "section_ref": f"column_{float(width):.4f}x{float(depth):.4f}",
+                "section_ref": section_ref,
                 },
                 semantic_metadata,
             ),
@@ -531,6 +578,10 @@ class IfcAuthor:
         width: float,
         depth: float,
         end_z: float | None = None,
+        profile_type: str = "rectangular",
+        web_thickness: float | None = None,
+        flange_thickness: float | None = None,
+        section_name: str | None = None,
         **semantic_metadata: object,
     ) -> ExecutionResult:
         self._ensure_project_hierarchy()
@@ -543,11 +594,14 @@ class IfcAuthor:
         matrix, length = self._member_transform(start, end)
         beam = ifcopenshell.api.root.create_entity(self.model, ifc_class="IfcBeam", name=name)
         ifcopenshell.api.geometry.edit_object_placement(self.model, product=beam, matrix=matrix, is_si=True)
-        profile = self.model.create_entity(
-            "IfcRectangleProfileDef",
-            ProfileType="AREA",
-            XDim=float(width),
-            YDim=float(depth),
+        profile = self._create_profile(
+            self.model,
+            width=width,
+            depth=depth,
+            profile_type=profile_type,
+            web_thickness=web_thickness,
+            flange_thickness=flange_thickness,
+            section_name=section_name,
         )
         rep = ifcopenshell.api.geometry.add_profile_representation(
             self.model,
@@ -557,6 +611,7 @@ class IfcAuthor:
         )
         ifcopenshell.api.geometry.assign_representation(self.model, product=beam, representation=rep)
         ifcopenshell.api.spatial.assign_container(self.model, products=[beam], relating_structure=storey)
+        section_ref = section_name or f"beam_{float(width):.4f}x{float(depth):.4f}"
         element_metadata = self._merged_metadata(
             {
                 "StartX": float(start_x),
@@ -569,8 +624,10 @@ class IfcAuthor:
                 "Depth": float(depth),
                 "Length": float(length),
                 "StructuralKind": "beam",
+                "ProfileType": profile_type,
+                "SectionName": section_name,
                 "MaterialRef": self._material_ref(semantic_metadata, "steel_default"),
-                "SectionRef": f"beam_{float(width):.4f}x{float(depth):.4f}",
+                "SectionRef": section_ref,
             },
             semantic_metadata,
         )
@@ -579,7 +636,7 @@ class IfcAuthor:
             "create_beam",
             beam,
             name,
-            f"Created beam {length:.2f}m long",
+            f"Created beam {section_ref} ({profile_type}) {length:.2f}m long",
             metadata=self._merged_metadata(
                 {
                 "storey_name": storey_name,
@@ -587,8 +644,10 @@ class IfcAuthor:
                 "width": float(width),
                 "depth": float(depth),
                 "end_z": float(base_z if end_z is None else end_z),
+                "profile_type": profile_type,
+                "section_name": section_name,
                 "material_ref": self._material_ref(semantic_metadata, "steel_default"),
-                "section_ref": f"beam_{float(width):.4f}x{float(depth):.4f}",
+                "section_ref": section_ref,
                 },
                 semantic_metadata,
             ),

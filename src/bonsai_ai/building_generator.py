@@ -22,6 +22,8 @@ from .facade_generator import (  # noqa: F401
     generate_windows,
     generate_doors,
 )
+from .section_library import starter_section_records, INCH_TO_M
+from .footing_selector import starter_footing_from_imposed_load, PSF_TO_KPA
 
 
 # ---------------------------------------------------------------------------
@@ -38,6 +40,38 @@ _DEFAULT_WALLS = {
     "thickness": 0.2,
     "facades": ["north", "south", "east", "west"],
 }
+_DEFAULT_FOUNDATION = {
+    "type": "spread_footings",
+    "soil_bearing_kpa": 96.0,  # ~2000 psf
+    "concrete_mpa": 28,
+    "bearing_elevation": -1.2,
+}
+
+# Floor load assumptions for gravity load estimation (kPa)
+_FLOOR_LOAD_KPA = {
+    "office": {"dead": 5.8, "live": 2.4},     # 0.2m slab + superimposed
+    "retail": {"dead": 5.8, "live": 4.8},
+    "parking": {"dead": 5.8, "live": 2.4},
+    "residential": {"dead": 5.8, "live": 1.9},
+}
+
+# Heuristic auto-sizing: pick section based on number of stories
+# These are conservative concept-level defaults
+_AUTO_COLUMN_BY_STORIES = {
+    1: "W10X33",
+    2: "W10X49",
+    3: "W12X40",
+    4: "W12X53",
+    5: "W14X68",
+    6: "W14X90",
+}
+_AUTO_BEAM_BY_SPAN = {
+    6.0: "W12X26",
+    8.0: "W16X31",
+    10.0: "W18X35",
+    12.0: "W21X44",
+    15.0: "W24X55",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -47,6 +81,58 @@ _DEFAULT_WALLS = {
 def _round6(value: float) -> float:
     """Round to 6 decimal places to avoid floating-point noise."""
     return round(value, 6)
+
+
+def _resolve_section(section_name: str, role: str, num_stories: int = 1,
+                     max_span: float = 8.0) -> Optional[Dict[str, Any]]:
+    """Resolve a section name to profile dimensions.
+
+    If section_name is "auto", pick a reasonable default based on building
+    parameters. Returns None if no section found (falls back to rectangular).
+
+    Returns dict with: profile_type, width, depth, web_thickness,
+                       flange_thickness, section_name
+    """
+    if section_name == "auto":
+        if role == "column":
+            # Pick by number of stories; clamp to largest available
+            max_key = max(_AUTO_COLUMN_BY_STORIES.keys())
+            section_name = _AUTO_COLUMN_BY_STORIES.get(
+                min(num_stories, max_key),
+                _AUTO_COLUMN_BY_STORIES[max_key],
+            )
+        elif role == "beam":
+            # Pick by max span; find the smallest section that covers the span
+            chosen = None
+            for span_limit in sorted(_AUTO_BEAM_BY_SPAN.keys()):
+                chosen = _AUTO_BEAM_BY_SPAN[span_limit]
+                if span_limit >= max_span:
+                    break
+            section_name = chosen or "W16X31"
+        else:
+            return None
+
+    catalog = starter_section_records()
+    record = catalog.get(section_name.upper().replace(" ", ""))
+    if record is None:
+        return None
+
+    result: Dict[str, Any] = {
+        "section_name": record.name,
+        "width": record.width_m,
+        "depth": record.depth_m,
+    }
+
+    if record.shape_family == "W" and record.tw_in is not None and record.tf_in is not None:
+        result["profile_type"] = "I"
+        result["web_thickness"] = record.tw_in * INCH_TO_M
+        result["flange_thickness"] = record.tf_in * INCH_TO_M
+    else:
+        result["profile_type"] = "rectangular"
+        result["web_thickness"] = None
+        result["flange_thickness"] = None
+
+    return result
 
 
 def _compute_grid(footprint: Dict[str, Any], grid: Dict[str, Any]) -> Dict[str, Any]:
@@ -139,6 +225,7 @@ class BuildingGenerator:
             "windows": 0,
             "doors": 0,
             "curtain_walls": 0,
+            "footings": 0,
         }
         self.wall_names: Dict[str, str] = {}  # "{face}_{storey}" -> wall element name
 
@@ -151,6 +238,29 @@ class BuildingGenerator:
         self.stories = _resolve_stories(spec["stories"])
         self.structure = {**_DEFAULT_STRUCTURE, **spec.get("structure", {})}
         self.walls_spec = {**_DEFAULT_WALLS, **spec.get("walls", {})}
+        self.foundation_spec = {**_DEFAULT_FOUNDATION, **spec.get("foundation", {})}
+
+        # Resolve steel sections (column_section / beam_section)
+        max_span = max(self.grid["spacing_x"], self.grid["spacing_y"])
+        num_stories = len(self.stories)
+
+        col_section_name = self.structure.get("column_section")
+        if col_section_name:
+            self._column_section = _resolve_section(
+                col_section_name, "column",
+                num_stories=num_stories, max_span=max_span,
+            )
+        else:
+            self._column_section = None
+
+        beam_section_name = self.structure.get("beam_section")
+        if beam_section_name:
+            self._beam_section = _resolve_section(
+                beam_section_name, "beam",
+                num_stories=num_stories, max_span=max_span,
+            )
+        else:
+            self._beam_section = None
 
     def generate(self) -> Dict[str, Any]:
         """Generate the full building. Returns summary stats."""
@@ -160,6 +270,7 @@ class BuildingGenerator:
         self._generate_floor_plates()
         self._generate_facades()
         self._generate_openings()
+        self._generate_foundations()
         self.author.save()
         return self._summary()
 
@@ -181,11 +292,28 @@ class BuildingGenerator:
         """Create columns at every grid intersection for each story.
 
         Uses the shared grid (xs, ys) so columns, beams, slabs, and walls
-        all align to the same grid.
+        all align to the same grid.  When a steel section is resolved
+        (column_section in spec), uses IfcIShapeProfileDef for real
+        I-beam rendering.
         """
         xs = self.grid["xs"]
         ys = self.grid["ys"]
-        col_width, col_depth = self.structure["column_size"]
+
+        # Use resolved I-beam section or fall back to rectangular
+        sec = self._column_section
+        if sec:
+            col_width = sec["width"]
+            col_depth = sec["depth"]
+            profile_type = sec["profile_type"]
+            web_thickness = sec["web_thickness"]
+            flange_thickness = sec["flange_thickness"]
+            section_name = sec["section_name"]
+        else:
+            col_width, col_depth = self.structure["column_size"]
+            profile_type = "rectangular"
+            web_thickness = None
+            flange_thickness = None
+            section_name = None
 
         for story in self.stories:
             storey_name = story["name"]
@@ -204,12 +332,18 @@ class BuildingGenerator:
                         width=col_width,
                         depth=col_depth,
                         height=height,
+                        profile_type=profile_type,
+                        web_thickness=web_thickness,
+                        flange_thickness=flange_thickness,
+                        section_name=section_name,
                     )
                     self.counts["columns"] += 1
 
+            section_label = section_name or f"{col_width}x{col_depth}"
             self.log.append(
                 f"Columns: {storey_name} - "
-                f"{len(xs)}x{len(ys)} = {len(xs) * len(ys)} columns"
+                f"{len(xs)}x{len(ys)} = {len(xs) * len(ys)} columns "
+                f"({section_label}, {profile_type})"
             )
 
     def _generate_beam_grid(self) -> None:
@@ -217,11 +351,27 @@ class BuildingGenerator:
 
         X-direction beams: constant Y, span between adjacent X gridlines.
         Y-direction beams: constant X, span between adjacent Y gridlines.
-        Uses the SAME grid variables as columns.
+        Uses the SAME grid variables as columns.  When a steel section is
+        resolved (beam_section in spec), uses IfcIShapeProfileDef.
         """
         xs = self.grid["xs"]
         ys = self.grid["ys"]
-        beam_width, beam_depth = self.structure["beam_size"]
+
+        # Use resolved I-beam section or fall back to rectangular
+        sec = self._beam_section
+        if sec:
+            beam_width = sec["width"]
+            beam_depth = sec["depth"]
+            profile_type = sec["profile_type"]
+            web_thickness = sec["web_thickness"]
+            flange_thickness = sec["flange_thickness"]
+            section_name = sec["section_name"]
+        else:
+            beam_width, beam_depth = self.structure["beam_size"]
+            profile_type = "rectangular"
+            web_thickness = None
+            flange_thickness = None
+            section_name = None
 
         for story in self.stories:
             storey_name = story["name"]
@@ -243,6 +393,10 @@ class BuildingGenerator:
                         base_z=base_z,
                         width=beam_width,
                         depth=beam_depth,
+                        profile_type=profile_type,
+                        web_thickness=web_thickness,
+                        flange_thickness=flange_thickness,
+                        section_name=section_name,
                     )
                     self.counts["beams"] += 1
                     beam_count += 1
@@ -262,11 +416,19 @@ class BuildingGenerator:
                         base_z=base_z,
                         width=beam_width,
                         depth=beam_depth,
+                        profile_type=profile_type,
+                        web_thickness=web_thickness,
+                        flange_thickness=flange_thickness,
+                        section_name=section_name,
                     )
                     self.counts["beams"] += 1
                     beam_count += 1
 
-            self.log.append(f"Beams: {storey_name} - {beam_count} beams")
+            section_label = section_name or f"{beam_width}x{beam_depth}"
+            self.log.append(
+                f"Beams: {storey_name} - {beam_count} beams "
+                f"({section_label}, {profile_type})"
+            )
 
     def _generate_floor_plates(self) -> None:
         """Create one slab per story spanning the full footprint.
@@ -327,6 +489,117 @@ class BuildingGenerator:
         self.counts["slabs"] += 1
         self.log.append(
             f"Slab: Roof @ {roof_elevation}m - {length}m x {width}m x {slab_thickness}m"
+        )
+
+    def _generate_foundations(self) -> None:
+        """Generate spread footings under each ground-floor column.
+
+        Estimates gravity loads from tributary area and floor loads, then
+        calls footing_selector.starter_footing_from_imposed_load() to size
+        each footing.  Only runs when spec includes a 'foundation' section
+        or column_section / beam_section (implying a real structural model).
+        """
+        foundation = self.foundation_spec
+        if foundation.get("type") == "none":
+            self.log.append("Foundations: skipped (type=none)")
+            return
+
+        # Only generate footings if explicitly requested via foundation spec
+        # or if steel sections are specified (real structural model)
+        has_explicit_foundation = "foundation" in self.spec
+        has_steel = self._column_section is not None or self._beam_section is not None
+        if not has_explicit_foundation and not has_steel:
+            self.log.append("Foundations: skipped (no foundation spec or steel sections)")
+            return
+
+        xs = self.grid["xs"]
+        ys = self.grid["ys"]
+        num_stories = len(self.stories)
+        spacing_x = self.grid["spacing_x"]
+        spacing_y = self.grid["spacing_y"]
+
+        bearing_elevation = foundation.get("bearing_elevation", -1.2)
+        soil_bearing_kpa = foundation.get("soil_bearing_kpa", 96.0)
+        # Convert kPa to psf for the footing_selector (it uses imperial internally)
+        allowable_bearing_psf = soil_bearing_kpa / PSF_TO_KPA
+
+        # Determine floor loads
+        program = "office"  # default
+        if self.stories:
+            program = self.stories[0].get("program", "office")
+        loads = _FLOOR_LOAD_KPA.get(program, _FLOOR_LOAD_KPA["office"])
+        service_load_kpa = loads["dead"] + loads["live"]  # service-level per floor
+
+        # Ensure we have a storey to assign footings to (use lowest storey)
+        ground_storey_name = self.stories[0]["name"]
+
+        # Determine edge positions for interior vs perimeter classification
+        min_x, max_x = xs[0], xs[-1]
+        min_y, max_y = ys[0], ys[-1]
+        tol = 1e-6
+
+        footing_count = 0
+        for ix, x in enumerate(xs):
+            for iy, y in enumerate(ys):
+                # Compute tributary area
+                on_x_edge = abs(x - min_x) < tol or abs(x - max_x) < tol
+                on_y_edge = abs(y - min_y) < tol or abs(y - max_y) < tol
+
+                if on_x_edge and on_y_edge:
+                    trib_factor = 0.25  # corner
+                elif on_x_edge or on_y_edge:
+                    trib_factor = 0.5   # edge
+                else:
+                    trib_factor = 1.0   # interior
+
+                tributary_area = spacing_x * spacing_y * trib_factor
+                # Service load: sum over all stories
+                service_load_kn = tributary_area * service_load_kpa * num_stories
+
+                on_perimeter = on_x_edge or on_y_edge
+                footing_family = "perimeter_spread_footing" if on_perimeter else "interior_spread_footing"
+
+                # Size the footing
+                footing_result = starter_footing_from_imposed_load(
+                    imposed_load_kn=service_load_kn,
+                    footing_family=footing_family,
+                    allowable_bearing_psf=allowable_bearing_psf,
+                )
+
+                pad_size = footing_result["recommended_square_size_m"]
+                thickness = footing_result["footing_thickness_m"]
+
+                # Place footing centered on column grid intersection
+                footing_x = x - pad_size / 2.0
+                footing_y = y - pad_size / 2.0
+
+                footing_name = f"Footing X{ix + 1} Y{iy + 1}"
+                self.author.create_footing(
+                    name=footing_name,
+                    storey_name=ground_storey_name,
+                    x=footing_x,
+                    y=footing_y,
+                    base_z=bearing_elevation,
+                    length=pad_size,
+                    width=pad_size,
+                    thickness=thickness,
+                    foundation_type="spread_footing",
+                    bearing_elevation=bearing_elevation,
+                    support_for=f"Col X{ix + 1} Y{iy + 1}",
+                    imposed_load_kn=round(service_load_kn, 2),
+                    allowable_bearing_kpa=round(soil_bearing_kpa, 2),
+                    concrete_strength_mpa=footing_result.get("concrete_strength_mpa"),
+                    rebar_grade=footing_result.get("rebar_grade"),
+                    rebar_bar_diameter_mm=footing_result.get("rebar_bar_diameter_mm"),
+                    rebar_spacing_mm=footing_result.get("rebar_spacing_mm"),
+                    rebar_weight_kg=footing_result.get("rebar_weight_kg"),
+                    basis_notes=footing_result.get("basis_notes"),
+                )
+                self.counts["footings"] += 1
+                footing_count += 1
+
+        self.log.append(
+            f"Foundations: {footing_count} spread footings at z={bearing_elevation}m"
         )
 
     def _generate_facades(self) -> None:

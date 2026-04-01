@@ -227,6 +227,60 @@ def test_commercial() -> dict:
     return summary
 
 
+STEEL_COMMERCIAL_SPEC = {
+    "footprint": {"length": 40, "width": 25},
+    "grid": {"spacing_x": 8, "spacing_y": 8.33},
+    "stories": [
+        {"name": "Level 1", "height": 4.5, "elevation": 0},
+        {"name": "Level 2", "height": 4.0, "elevation": 4.5},
+        {"name": "Level 3", "height": 4.0, "elevation": 8.5},
+        {"name": "Level 4", "height": 4.0, "elevation": 12.5},
+        {"name": "Level 5", "height": 4.0, "elevation": 16.5},
+    ],
+    "structure": {
+        "column_section": "W12x40",
+        "beam_section": "W10x26",
+        "slab_thickness": 0.2,
+    },
+    "foundation": {
+        "type": "spread_footings",
+        "soil_bearing_kpa": 150,
+        "concrete_mpa": 28,
+        "bearing_elevation": -1.2,
+    },
+    "walls": {
+        "thickness": 0.2,
+        "facades": ["north", "south", "east", "west"],
+    },
+}
+
+AUTO_SECTION_SPEC = {
+    "footprint": {"length": 40, "width": 25},
+    "grid": {"spacing_x": 8, "spacing_y": 8.33},
+    "stories": [
+        {"name": "Level 1", "height": 4.5, "elevation": 0},
+        {"name": "Level 2", "height": 4.0, "elevation": 4.5},
+        {"name": "Level 3", "height": 4.0, "elevation": 8.5},
+        {"name": "Level 4", "height": 4.0, "elevation": 12.5},
+        {"name": "Level 5", "height": 4.0, "elevation": 16.5},
+    ],
+    "structure": {
+        "column_section": "auto",
+        "beam_section": "auto",
+        "slab_thickness": 0.2,
+    },
+    "foundation": {
+        "type": "spread_footings",
+        "soil_bearing_kpa": 150,
+        "concrete_mpa": 28,
+    },
+    "walls": {
+        "thickness": 0.2,
+        "facades": ["north", "south", "east", "west"],
+    },
+}
+
+
 def test_grid_coverage() -> None:
     """Verify that grid spacing is adjusted to fit, not truncated."""
     print("\n=== Grid Coverage Test ===")
@@ -258,6 +312,90 @@ def test_grid_coverage() -> None:
     print(f"  PASS")
 
 
+def test_steel_commercial() -> dict:
+    """5-story commercial with W12x40 columns, W10x26 beams, and footings."""
+    print("\n=== Steel Commercial (5 stories, W12x40/W10x26, footings) ===")
+    path = str(OUT_DIR / "steel_commercial.ifc")
+    gen = BuildingGenerator(STEEL_COMMERCIAL_SPEC, path)
+    summary = gen.generate()
+
+    counts = summary["counts"]
+
+    # Same grid as commercial: 5x3 bays -> 6x4=24 grid points
+    _assert(summary["grid"]["bays_x"] == 5, f"bays_x: {summary['grid']['bays_x']}")
+    _assert(summary["grid"]["bays_y"] == 3, f"bays_y: {summary['grid']['bays_y']}")
+
+    # 5 stories * 24 columns = 120
+    _assert(counts["columns"] == 120, f"columns: {counts['columns']} (expect 120)")
+
+    # Footings: one per grid point = 24
+    _assert(counts["footings"] == 24, f"footings: {counts['footings']} (expect 24)")
+
+    # Verify IFC file contains IfcIShapeProfileDef
+    import ifcopenshell
+    model = ifcopenshell.open(path)
+    i_profiles = model.by_type("IfcIShapeProfileDef")
+    _assert(len(i_profiles) > 0,
+            f"Expected IfcIShapeProfileDef in IFC, found {len(i_profiles)}")
+
+    # Should NOT have IfcRectangleProfileDef for columns/beams (only for slabs)
+    rect_profiles = model.by_type("IfcRectangleProfileDef")
+    # rect_profiles may exist for slab edges etc but I-profiles should dominate
+    print(f"  IfcIShapeProfileDef count: {len(i_profiles)}")
+    print(f"  IfcRectangleProfileDef count: {len(rect_profiles)}")
+
+    # Verify footings exist in IFC
+    footings = model.by_type("IfcFooting")
+    _assert(len(footings) == 24, f"IfcFooting count: {len(footings)} (expect 24)")
+
+    # Verify an I-profile has correct dimensions (W12x40)
+    # W12X40: depth=11.9in=0.30226m, width=8.01in=0.203454m,
+    #         tw=0.295in=0.007493m, tf=0.515in=0.013081m
+    sample = i_profiles[0]
+    _assert_close(sample.OverallDepth, 0.30226, "W12x40 depth", tol=0.001)
+    _assert_close(sample.OverallWidth, 0.203454, "W12x40 width", tol=0.001)
+
+    print(f"  Counts: {counts}")
+    for line in summary["log"]:
+        if "Column" in line or "Beam" in line or "Foundation" in line:
+            print(f"    {line}")
+    print(f"  PASS")
+    return summary
+
+
+def test_auto_sections() -> dict:
+    """5-story commercial with auto section selection."""
+    print("\n=== Auto Sections (5 stories, auto/auto, footings) ===")
+    path = str(OUT_DIR / "auto_sections.ifc")
+    gen = BuildingGenerator(AUTO_SECTION_SPEC, path)
+    summary = gen.generate()
+
+    counts = summary["counts"]
+
+    # Auto should pick a valid column section for 5 stories
+    _assert(counts["columns"] == 120, f"columns: {counts['columns']} (expect 120)")
+    _assert(counts["footings"] == 24, f"footings: {counts['footings']} (expect 24)")
+
+    # Verify IFC file has I-shape profiles
+    import ifcopenshell
+    model = ifcopenshell.open(path)
+    i_profiles = model.by_type("IfcIShapeProfileDef")
+    _assert(len(i_profiles) > 0,
+            f"Expected IfcIShapeProfileDef with auto sections, found {len(i_profiles)}")
+
+    # Log should show section names
+    col_log = [l for l in summary["log"] if "Column" in l]
+    _assert(any("W14X68" in l for l in col_log),
+            f"Auto column should select W14X68 for 5 stories, log: {col_log}")
+
+    print(f"  Counts: {counts}")
+    for line in summary["log"]:
+        if "Column" in line or "Beam" in line or "Foundation" in line:
+            print(f"    {line}")
+    print(f"  PASS")
+    return summary
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -267,7 +405,8 @@ def main() -> int:
     passed = 0
     failed = 0
 
-    for test_fn in [test_warehouse, test_office, test_commercial, test_grid_coverage]:
+    for test_fn in [test_warehouse, test_office, test_commercial, test_grid_coverage,
+                    test_steel_commercial, test_auto_sections]:
         try:
             test_fn()
             passed += 1
