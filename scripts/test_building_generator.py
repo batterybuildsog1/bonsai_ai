@@ -131,7 +131,7 @@ def test_warehouse() -> dict:
     counts = summary["counts"]
     _assert(counts["storeys"] == 1, f"storeys: {counts['storeys']}")
     _assert(counts["columns"] == 4 * 3, f"columns: {counts['columns']} (expect 12)")  # (3+1)*(2+1)
-    _assert(counts["slabs"] == 1, f"slabs: {counts['slabs']}")
+    _assert(counts["slabs"] == 2, f"slabs: {counts['slabs']} (expect 2: 1 floor + 1 roof)")
     _assert(counts["walls"] == 4, f"walls: {counts['walls']}")
 
     # Beams: X-dir: 3 rows * 3 spans = 9, Y-dir: 4 cols * 2 spans = 8 -> 17
@@ -165,7 +165,7 @@ def test_office() -> dict:
     counts = summary["counts"]
     _assert(counts["storeys"] == 2, f"storeys: {counts['storeys']}")
     _assert(counts["columns"] == 2 * 5 * 4, f"columns: {counts['columns']} (expect 40)")  # 2*(4+1)*(3+1)
-    _assert(counts["slabs"] == 2, f"slabs: {counts['slabs']}")
+    _assert(counts["slabs"] == 3, f"slabs: {counts['slabs']} (expect 3: 2 floors + 1 roof)")
     _assert(counts["walls"] == 8, f"walls: {counts['walls']} (expect 8)")  # 2*4
 
     # Beams per story: X-dir: 4 rows * 4 spans = 16, Y-dir: 5 cols * 3 spans = 15 -> 31
@@ -209,8 +209,8 @@ def test_commercial() -> dict:
     _assert(counts["columns"] == 5 * 6 * 4,
             f"columns: {counts['columns']} (expect {5 * 6 * 4})")
 
-    # Slabs: 5
-    _assert(counts["slabs"] == 5, f"slabs: {counts['slabs']}")
+    # Slabs: 5 floors + 1 roof = 6
+    _assert(counts["slabs"] == 6, f"slabs: {counts['slabs']} (expect 6: 5 floors + 1 roof)")
 
     # Walls: 5 * 4 = 20
     _assert(counts["walls"] == 20, f"walls: {counts['walls']} (expect 20)")

@@ -254,7 +254,26 @@ def generate_windows(
             continue
         else:
             windows_cfg = fspec.get("windows", {})
-            applicable_stories = list(stories)
+            # Check for "stories" filter in the windows config itself
+            win_stories_filter = windows_cfg.get("stories", "all")
+            if win_stories_filter == "upper_only":
+                applicable_stories = stories[1:]  # skip ground floor
+            elif win_stories_filter == "ground_only":
+                applicable_stories = stories[:1]
+            else:
+                # Default: skip ground floor if entries (doors) exist on
+                # this facade -- ground floor with a door is typically
+                # solid wall, not windowed.
+                entries = spec.get("entries", [])
+                has_ground_entry = any(
+                    e.get("facade", e.get("face", "")) == face_name
+                    and e.get("story_index", 0) == 0
+                    for e in entries
+                )
+                if has_ground_entry:
+                    applicable_stories = stories[1:]  # skip ground floor
+                else:
+                    applicable_stories = list(stories)
 
         pattern = windows_cfg.get("pattern", "none")
         if pattern == "none":

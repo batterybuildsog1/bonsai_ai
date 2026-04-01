@@ -311,6 +311,24 @@ class BuildingGenerator:
                     f"Slab: {storey_name} - {length}m x {width}m x {thickness}m"
                 )
 
+        # --- Roof slab: close the top of the building ---
+        top_story = self.stories[-1]
+        roof_elevation = _round6(top_story["elevation"] + top_story["height"])
+        self.author.create_rectangular_slab(
+            name="Roof Slab",
+            storey_name=top_story["name"],  # assign to top storey
+            x=0.0,
+            y=0.0,
+            z=roof_elevation,
+            length=length,
+            width=width,
+            thickness=slab_thickness,
+        )
+        self.counts["slabs"] += 1
+        self.log.append(
+            f"Slab: Roof @ {roof_elevation}m - {length}m x {width}m x {slab_thickness}m"
+        )
+
     def _generate_facades(self) -> None:
         """Generate facade walls (walls, curtain walls, mixed) per face per storey.
 

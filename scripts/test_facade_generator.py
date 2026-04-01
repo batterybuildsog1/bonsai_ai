@@ -415,8 +415,12 @@ def test_building_generator_integration():
     check("6 walls (3 faces x 2 stories)", counts["walls"] == 6,
           f"got {counts['walls']}, wall_names: {wall_names_out}")
 
-    # Windows: north (5 bays_x) + east (4 bays_y) + west (4 bays_y) = 13 per story x 2 = 26
-    expected_win = (5 + 4 + 4) * 2
+    # Windows: north ground floor skipped (has door entry), so:
+    #   north: 5 bays x 1 upper story = 5
+    #   east: 4 bays x 2 stories = 8
+    #   west: 4 bays x 2 stories = 8
+    # Total: 5 + 8 + 8 = 21
+    expected_win = 5 + 4 * 2 + 4 * 2
     check(f"windows = {expected_win}", counts["windows"] == expected_win,
           f"got {counts['windows']}")
 
