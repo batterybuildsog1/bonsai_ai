@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Optional
 import ifcopenshell
 import ifcopenshell.util.element
 
-from .cost_database import COST_DB, M2_TO_SF
+from .cost_database import COST_DB, COST_SOURCE, M2_TO_SF
 from .section_library import starter_section_records, LB_PER_FT_TO_N_PER_M
 
 # Gravity: 1 N/m = 1 / 9.80665 kg/m
