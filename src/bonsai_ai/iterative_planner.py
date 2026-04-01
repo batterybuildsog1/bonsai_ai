@@ -34,7 +34,7 @@ from .planner import PlannerError, PlannedToolCall, _to_tool_call
 # Timeout
 # ---------------------------------------------------------------------------
 
-_SESSION_TIMEOUT = 300  # 5 minutes per turn
+_SESSION_TIMEOUT = 900  # 15 minutes per turn — quality over speed
 
 
 # ---------------------------------------------------------------------------
