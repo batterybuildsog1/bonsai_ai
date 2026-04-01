@@ -1,0 +1,55 @@
+{
+  "hash": "54588e0b",
+  "configHash": "96c73a1b",
+  "lockfileHash": "e3b0c442",
+  "browserHash": "81ef4256",
+  "optimized": {
+    "@ifc-lite/geometry": {
+      "src": "../../viewer/node_modules/@ifc-lite/geometry/dist/index.js",
+      "file": "@ifc-lite_geometry.js",
+      "fileHash": "eba92458",
+      "needsInterop": false
+    },
+    "@ifc-lite/parser": {
+      "src": "../../viewer/node_modules/@ifc-lite/parser/dist/index.js",
+      "file": "@ifc-lite_parser.js",
+      "fileHash": "f1d5c26d",
+      "needsInterop": false
+    },
+    "@ifc-lite/query": {
+      "src": "../../viewer/node_modules/@ifc-lite/query/dist/index.js",
+      "file": "@ifc-lite_query.js",
+      "fileHash": "830746c6",
+      "needsInterop": false
+    },
+    "web-ifc": {
+      "src": "../../viewer/node_modules/web-ifc/web-ifc-api.js",
+      "file": "web-ifc.js",
+      "fileHash": "a9b8793b",
+      "needsInterop": false
+    }
+  },
+  "chunks": {
+    "chunk-G5TDDLNF": {
+      "file": "chunk-G5TDDLNF.js"
+    },
+    "epsg-index.generated-OB3OLX6M": {
+      "file": "epsg-index__generated-OB3OLX6M.js"
+    },
+    "event-G4MX2ISL": {
+      "file": "event-G4MX2ISL.js"
+    },
+    "native-bridge-PLCFR4UN": {
+      "file": "native-bridge-PLCFR4UN.js"
+    },
+    "wasm-bridge-BCZOTWF3": {
+      "file": "wasm-bridge-BCZOTWF3.js"
+    },
+    "chunk-3MADGB7W": {
+      "file": "chunk-3MADGB7W.js"
+    },
+    "chunk-ALD7NFWX": {
+      "file": "chunk-ALD7NFWX.js"
+    }
+  }
+}

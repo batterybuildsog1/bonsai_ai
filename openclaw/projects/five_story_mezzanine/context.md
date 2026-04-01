@@ -30,8 +30,13 @@
 
 ## Current State
 
-- [ ] Prompt written (out/five_story_mezzanine/prompt.txt)
-- [ ] IFC generated
+- [x] Prompt written (out/five_story_mezzanine/prompt.txt)
+- [x] IFC generated + patched (out/five_story_mezzanine/five_story_mezzanine.ifc)
+  - 174 columns, 285 beams, 9 slabs, 4 curtain walls, 330 cladding plates
+  - 20 perimeter walls (4 facades × 5 floors, 150mm backing behind curtain panels)
+  - 2 doors (main entrance south L1, service entrance north L1)
+  - 32 windows (east + west facades, floors 2–5, 4 bays each)
+  - Patches: scripts/patch_five_story_beams.py, scripts/patch_five_story_openings.py
 - [ ] Structural analysis run
 - [ ] Viewed in web viewer
 - [ ] Component selections started
