@@ -84,12 +84,23 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model", help="Override the default model for the selected provider.")
     parser.add_argument("--api-key-env", help="Environment variable that holds the API key.")
     parser.add_argument("--output", required=True, help="Path to the IFC file to create or update.")
-    parser.add_argument("--prompt", required=True, help="Natural-language building request.")
+    parser.add_argument("--prompt", required=False, default=None, help="Natural-language building request.")
+    parser.add_argument(
+        "--from-spec",
+        metavar="SPEC_JSON",
+        help="Path to a JSON spec file. Generates via BuildingGenerator instead of the AI planner.",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Print the planned tool calls without writing IFC.")
     parser.add_argument(
         "--iterative",
         action="store_true",
         help="Use iterative session-based planner via OpenClaw (no API key needed).",
+    )
+    parser.add_argument(
+        "--spec-first",
+        action="store_true",
+        help="Use spec-first pipeline: AI generates a building spec, validates it, "
+             "then passes it to BuildingGenerator for deterministic IFC generation.",
     )
     parser.add_argument(
         "--full-pipeline",
@@ -102,6 +113,63 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+
+    # -----------------------------------------------------------------------
+    # Spec-first generator path -- deterministic from JSON spec.
+    # -----------------------------------------------------------------------
+    if args.from_spec:
+        from .building_generator import generate_from_json
+        summary = generate_from_json(args.from_spec, args.output)
+        print(json.dumps(summary, indent=2))
+        if args.full_pipeline:
+            _run_full_pipeline(args.output)
+        return 0
+
+    # -----------------------------------------------------------------------
+    # Prompt is required for AI planner paths.
+    # -----------------------------------------------------------------------
+    if not args.prompt:
+        print("Error: --prompt is required unless --from-spec is used.")
+        return 1
+
+    # -----------------------------------------------------------------------
+    # Spec-first AI path: AI generates spec -> validate -> BuildingGenerator
+    # -----------------------------------------------------------------------
+    if args.spec_first:
+        from .spec_planner import generate_spec
+        from .building_generator import generate_from_spec
+
+        print(f"[spec-first] Generating building spec via {args.provider}...")
+        api_key = None
+        if args.api_key_env:
+            api_key = os.environ.get(args.api_key_env)
+
+        spec = generate_spec(
+            user_prompt=args.prompt,
+            provider=args.provider,
+            model=args.model,
+            api_key=api_key,
+        )
+
+        if args.dry_run:
+            print(json.dumps(spec, indent=2))
+            return 0
+
+        # Check for unresolved validation issues
+        validation_issues = spec.pop("_validation_issues", None)
+        if validation_issues:
+            print("[spec-first] WARNING: Spec has unresolved validation issues:")
+            for issue in validation_issues:
+                print(f"  - {issue}")
+            print("[spec-first] Proceeding with generation anyway...")
+
+        print(f"[spec-first] Generating IFC from spec -> {args.output}")
+        summary = generate_from_spec(spec, args.output)
+        print(json.dumps(summary, indent=2))
+
+        if args.full_pipeline:
+            _run_full_pipeline(args.output)
+        return 0
 
     # -----------------------------------------------------------------------
     # Iterative planner path -- session-based via OpenClaw subscription.
