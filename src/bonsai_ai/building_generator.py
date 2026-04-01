@@ -738,14 +738,36 @@ class BuildingGenerator:
 # Convenience: generate from a spec dict or a JSON file path
 # ---------------------------------------------------------------------------
 
-def generate_from_spec(spec: Dict[str, Any], output_path: str) -> Dict[str, Any]:
-    """One-shot: build an IFC from a spec dict."""
+def generate_from_spec(
+    spec: Dict[str, Any],
+    output_path: str,
+    estimate_cost: bool = False,
+) -> Dict[str, Any]:
+    """One-shot: build an IFC from a spec dict.
+
+    If *estimate_cost* is True, runs the cost estimator on the generated IFC
+    and includes the cost report in the returned summary under the "cost" key.
+    """
     gen = BuildingGenerator(spec, output_path)
-    return gen.generate()
+    result = gen.generate()
+
+    if estimate_cost:
+        try:
+            from .cost_estimator import extract_quantities, generate_cost_report
+            quantities = extract_quantities(output_path)
+            result["cost"] = generate_cost_report(quantities)
+        except Exception as exc:
+            result["cost_error"] = str(exc)
+
+    return result
 
 
-def generate_from_json(spec_path: str, output_path: str) -> Dict[str, Any]:
+def generate_from_json(
+    spec_path: str,
+    output_path: str,
+    estimate_cost: bool = False,
+) -> Dict[str, Any]:
     """One-shot: load a JSON spec file and build an IFC."""
     with open(spec_path, "r") as f:
         spec = json.load(f)
-    return generate_from_spec(spec, output_path)
+    return generate_from_spec(spec, output_path, estimate_cost=estimate_cost)

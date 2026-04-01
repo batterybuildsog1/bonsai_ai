@@ -108,6 +108,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=True,
         help="Run the full design pipeline (export + analysis + bundle) after plan+IFC. Default: true.",
     )
+    parser.add_argument(
+        "--cost-report",
+        action="store_true",
+        help="Generate a cost estimate after IFC generation.",
+    )
     return parser
 
 
@@ -121,6 +126,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         from .building_generator import generate_from_json
         summary = generate_from_json(args.from_spec, args.output)
         print(json.dumps(summary, indent=2))
+        if args.cost_report:
+            _run_cost_report(args.output)
         if args.full_pipeline:
             _run_full_pipeline(args.output)
         return 0
@@ -167,6 +174,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         summary = generate_from_spec(spec, args.output)
         print(json.dumps(summary, indent=2))
 
+        if args.cost_report:
+            _run_cost_report(args.output)
         if args.full_pipeline:
             _run_full_pipeline(args.output)
         return 0
@@ -190,6 +199,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 return 0
 
         # Run the full design pipeline after IFC generation
+        if args.cost_report:
+            _run_cost_report(args.output)
         if args.full_pipeline:
             _run_full_pipeline(args.output)
 
@@ -360,11 +371,37 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"{result.tool_name}: {result.message}")
     print(author.debug_dump())
 
+    # Run cost report if requested
+    if args.cost_report:
+        _run_cost_report(args.output)
+
     # Run the full design pipeline after IFC generation
     if args.full_pipeline:
         _run_full_pipeline(args.output)
 
     return 0
+
+
+def _run_cost_report(ifc_path: str) -> None:
+    """Generate and print a cost estimate for an existing IFC file."""
+    try:
+        from .cost_estimator import extract_quantities, generate_cost_report, format_cost_report
+    except ImportError as exc:
+        print(f"[cost] Skipping cost report -- missing dependency: {exc}")
+        return
+
+    print(f"\n[cost] Generating cost estimate for {ifc_path}...")
+    quantities = extract_quantities(ifc_path)
+    report = generate_cost_report(quantities)
+    print(format_cost_report(report))
+
+    # Write JSON alongside the IFC
+    output_dir = os.path.dirname(os.path.abspath(ifc_path))
+    json_path = os.path.join(output_dir, "cost_report.json")
+    report_with_quantities = {"quantities": quantities, **report}
+    with open(json_path, "w") as f:
+        json.dump(report_with_quantities, f, indent=2)
+    print(f"[cost] JSON cost report written to {json_path}")
 
 
 def _run_full_pipeline(ifc_path: str) -> None:
