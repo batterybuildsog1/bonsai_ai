@@ -351,6 +351,68 @@ TOOL_SPECS: List[ToolSpec] = [
         },
     ),
     ToolSpec(
+        name="generate_beam_grid",
+        description=(
+            "Generate beams at every gridline intersection. Compiles into bays_x*(bays_y+1) east-west beams "
+            "plus bays_y*(bays_x+1) north-south beams. Use this after generate_column_grid with matching grid parameters."
+        ),
+        schema={
+            "type": "object",
+            "additionalProperties": False,
+            "properties": _with_common_metadata(
+                {
+                    "name": _string("Beam grid name, used as prefix for generated beam names."),
+                    "storey_name": _string("Storey that contains the beams."),
+                    "grid_origin_x": _number("Grid origin X coordinate in meters."),
+                    "grid_origin_y": _number("Grid origin Y coordinate in meters."),
+                    "base_z": _number("Beam base Z elevation in meters."),
+                    "bays_x": {"type": "integer", "description": "Number of bays in the X direction."},
+                    "bays_y": {"type": "integer", "description": "Number of bays in the Y direction."},
+                    "spacing_x": _number("Bay spacing in X direction in meters."),
+                    "spacing_y": _number("Bay spacing in Y direction in meters."),
+                    "beam_width": _number("Beam cross-section width in meters."),
+                    "beam_depth": _number("Beam cross-section depth in meters."),
+                }
+            ),
+            "required": [
+                "name", "storey_name", "grid_origin_x", "grid_origin_y", "base_z",
+                "bays_x", "bays_y", "spacing_x", "spacing_y",
+                "beam_width", "beam_depth",
+            ],
+        },
+    ),
+    ToolSpec(
+        name="generate_opening_array",
+        description=(
+            "Generate evenly spaced windows or doors along a wall. Compiles into N create_window "
+            "or create_door calls. Use this instead of individual opening calls for repetitive facades."
+        ),
+        schema={
+            "type": "object",
+            "additionalProperties": False,
+            "properties": _with_common_metadata(
+                {
+                    "name": _string("Opening array name, used as prefix for generated opening names."),
+                    "storey_name": _string("Storey that contains the openings."),
+                    "wall_name": _string("Exact wall name to host the openings."),
+                    "count": {"type": "integer", "description": "Number of openings to generate."},
+                    "spacing": _number("Center-to-center spacing between openings in meters."),
+                    "start_offset": _number("Offset from wall start to the first opening center in meters."),
+                    "opening_type": {"type": "string", "enum": ["window", "door"], "description": "Type of opening."},
+                    "width": _number("Opening width in meters."),
+                    "height": _number("Opening height in meters."),
+                    "sill_height": _number("Sill height for windows in meters (ignored for doors)."),
+                    "thickness": _number("Opening depth/thickness in meters."),
+                }
+            ),
+            "required": [
+                "name", "storey_name", "wall_name",
+                "count", "spacing", "start_offset",
+                "opening_type", "width", "height", "thickness",
+            ],
+        },
+    ),
+    ToolSpec(
         name="generate_facade_grid",
         description=(
             "Generate a curtain wall facade along a line. Compiles into 1 create_curtain_wall call. "

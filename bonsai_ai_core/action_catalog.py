@@ -26,9 +26,11 @@ SEMANTIC_ACTIONS = (
     "create_stair_landing",
     "create_connection_plate",
     "generate_column_grid",
+    "generate_beam_grid",
     "generate_perimeter_walls",
     "generate_floor_plate",
     "generate_facade_grid",
+    "generate_opening_array",
 )
 
 EDIT_ACTIONS = (
@@ -222,6 +224,11 @@ COMMON_ACTION_PROPERTIES: JsonDict = {
     "start_y": _number("Start Y coordinate in meters."),
     "end_x": _number("End X coordinate in meters."),
     "end_y": _number("End Y coordinate in meters."),
+    # Opening array generator fields
+    "count": _integer("Number of openings to generate."),
+    "spacing": _number("Center-to-center spacing between openings in meters."),
+    "start_offset": _number("Offset from wall start to the first opening center in meters."),
+    "opening_type": _enum("Type of opening to generate.", ["window", "door"]),
     "semantics": SEMANTICS_OBJECT,
     "presentation": PRESENTATION_OBJECT,
     "foundation": FOUNDATION_OBJECT,

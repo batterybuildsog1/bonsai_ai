@@ -143,6 +143,9 @@ def validate_action(index: int, action: Dict[str, Any], *, allow_semantic: bool 
     if action_type == "generate_column_grid":
         _require_column_grid_fields(index, action)
         return
+    if action_type == "generate_beam_grid":
+        _require_beam_grid_fields(index, action)
+        return
     if action_type == "generate_perimeter_walls":
         _require_perimeter_walls_fields(index, action)
         return
@@ -151,6 +154,9 @@ def validate_action(index: int, action: Dict[str, Any], *, allow_semantic: bool 
         return
     if action_type == "generate_facade_grid":
         _require_facade_grid_fields(index, action)
+        return
+    if action_type == "generate_opening_array":
+        _require_opening_array_fields(index, action)
         return
 
     numeric_requirements = {
@@ -352,6 +358,9 @@ def _coerce_numeric_fields(action: Dict[str, Any]) -> None:
         "start_y",
         "end_x",
         "end_y",
+        "count",
+        "spacing",
+        "start_offset",
     }
     for field in numeric_fields:
         value = action.get(field)
@@ -363,7 +372,7 @@ def _coerce_numeric_fields(action: Dict[str, Any]) -> None:
                 parsed = float(stripped)
             except ValueError:
                 continue
-            if field in {"x", "y", "z", "x1", "y1", "x2", "y2", "elevation", "step_count"} and parsed.is_integer():
+            if field in {"x", "y", "z", "x1", "y1", "x2", "y2", "elevation", "step_count", "count"} and parsed.is_integer():
                 action[field] = int(parsed)
             else:
                 action[field] = parsed
@@ -495,9 +504,40 @@ def _require_floor_plate_fields(index: int, action: Dict[str, Any]) -> None:
                 raise ValidationError(f"Action {index} field '{field}' must be greater than zero.")
 
 
+def _require_beam_grid_fields(index: int, action: Dict[str, Any]) -> None:
+    _require_numeric_fields(
+        index,
+        action,
+        ("grid_origin_x", "grid_origin_y", "base_z", "spacing_x", "spacing_y", "beam_width", "beam_depth"),
+    )
+    for field in ("bays_x", "bays_y"):
+        value = action.get(field)
+        if not isinstance(value, (int, float)):
+            raise ValidationError(f"Action {index} field '{field}' must be numeric.")
+        if int(value) < 0:
+            raise ValidationError(f"Action {index} field '{field}' must be non-negative.")
+
+
 def _require_facade_grid_fields(index: int, action: Dict[str, Any]) -> None:
     _require_numeric_fields(
         index,
         action,
         ("start_x", "start_y", "end_x", "end_y", "base_z", "height", "panel_width", "panel_height", "panel_thickness"),
     )
+
+
+def _require_opening_array_fields(index: int, action: Dict[str, Any]) -> None:
+    _require_numeric_fields(index, action, ("width", "height", "thickness", "start_offset", "spacing"))
+    _require_string_fields(index, action, ("wall_name",))
+    count = action.get("count")
+    if not isinstance(count, (int, float)):
+        raise ValidationError(f"Action {index} field 'count' must be numeric.")
+    if int(count) < 1:
+        raise ValidationError(f"Action {index} field 'count' must be at least 1.")
+    opening_type = action.get("opening_type")
+    if opening_type is not None and opening_type not in ("window", "door"):
+        raise ValidationError(f"Action {index} opening_type must be 'window' or 'door'.")
+    if (opening_type or "window") == "window":
+        sill = action.get("sill_height")
+        if sill is not None and not isinstance(sill, (int, float)):
+            raise ValidationError(f"Action {index} field 'sill_height' must be numeric when provided.")

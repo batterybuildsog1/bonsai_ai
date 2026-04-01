@@ -82,12 +82,16 @@ def _compile_action(action: Dict[str, Any]) -> List[Dict[str, Any]]:
         return [_ensure_semantic_identity(compiled)]
     if action_type == "generate_column_grid":
         return _compile_column_grid(action)
+    if action_type == "generate_beam_grid":
+        return _compile_beam_grid(action)
     if action_type == "generate_perimeter_walls":
         return _compile_perimeter_walls(action)
     if action_type == "generate_floor_plate":
         return _compile_floor_plate(action)
     if action_type == "generate_facade_grid":
         return _compile_facade_grid(action)
+    if action_type == "generate_opening_array":
+        return _compile_opening_array(action)
     return [_ensure_semantic_identity(copy.deepcopy(action))]
 
 
@@ -202,6 +206,99 @@ def _compile_column_grid(action: Dict[str, Any]) -> List[Dict[str, Any]]:
             )
             columns.append(_ensure_semantic_identity(column))
     return columns
+
+
+def _compile_beam_grid(action: Dict[str, Any]) -> List[Dict[str, Any]]:
+    grid_name = str(action["name"])
+    storey = action.get("storey") or action.get("storey_name")
+    origin_x = float(action["grid_origin_x"])
+    origin_y = float(action["grid_origin_y"])
+    base_z = float(action["base_z"])
+    bays_x = int(action["bays_x"])
+    bays_y = int(action["bays_y"])
+    spacing_x = float(action["spacing_x"])
+    spacing_y = float(action["spacing_y"])
+    beam_width = float(action["beam_width"])
+    beam_depth = float(action["beam_depth"])
+
+    base_semantics = dict(action.get("semantics") or {})
+    grid_id = str(base_semantics.get("element_id") or _slug(grid_name))
+
+    beams: List[Dict[str, Any]] = []
+
+    # East-west beams along each Y-gridline (constant Y, spanning X)
+    for row in range(bays_y + 1):
+        y_pos = origin_y + row * spacing_y
+        for col in range(bays_x):
+            x_start = origin_x + col * spacing_x
+            x_end = origin_x + (col + 1) * spacing_x
+            label = f"EW-{_column_label(row, col)}"
+            element_name = f"{grid_name}-Beam-{label}"
+
+            semantics = copy.deepcopy(base_semantics)
+            semantics["element_id"] = f"{grid_id}__beam_{label.lower()}"
+            semantics.setdefault("parent_id", grid_id)
+            semantics.setdefault("assembly_id", grid_id)
+            semantics.setdefault("subrole", "grid_beam")
+            group_path = list(semantics.get("group_path") or [])
+            if "Beams" not in group_path:
+                semantics["group_path"] = group_path + ["Beams"]
+
+            beam = _inherit_metadata(
+                action,
+                {
+                    "type": "create_beam",
+                    "name": element_name,
+                    "storey": storey,
+                    "x1": x_start,
+                    "y1": y_pos,
+                    "x2": x_end,
+                    "y2": y_pos,
+                    "base_z": base_z,
+                    "width": beam_width,
+                    "depth": beam_depth,
+                    "semantics": semantics,
+                },
+            )
+            beams.append(_ensure_semantic_identity(beam))
+
+    # North-south beams along each X-gridline (constant X, spanning Y)
+    for col in range(bays_x + 1):
+        x_pos = origin_x + col * spacing_x
+        for row in range(bays_y):
+            y_start = origin_y + row * spacing_y
+            y_end = origin_y + (row + 1) * spacing_y
+            label = f"NS-{_column_label(row, col)}"
+            element_name = f"{grid_name}-Beam-{label}"
+
+            semantics = copy.deepcopy(base_semantics)
+            semantics["element_id"] = f"{grid_id}__beam_{label.lower()}"
+            semantics.setdefault("parent_id", grid_id)
+            semantics.setdefault("assembly_id", grid_id)
+            semantics.setdefault("subrole", "grid_beam")
+            group_path = list(semantics.get("group_path") or [])
+            if "Beams" not in group_path:
+                semantics["group_path"] = group_path + ["Beams"]
+
+            beam = _inherit_metadata(
+                action,
+                {
+                    "type": "create_beam",
+                    "name": element_name,
+                    "storey": storey,
+                    "x1": x_pos,
+                    "y1": y_start,
+                    "x2": x_pos,
+                    "y2": y_end,
+                    "base_z": base_z,
+                    "width": beam_width,
+                    "depth": beam_depth,
+                    "semantics": semantics,
+                },
+            )
+            beams.append(_ensure_semantic_identity(beam))
+
+    return beams
 
 
 def _compile_perimeter_walls(action: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -400,6 +497,67 @@ def _compile_facade_grid(action: Dict[str, Any]) -> List[Dict[str, Any]]:
         },
     )
     return [_ensure_semantic_identity(curtain_wall)]
+
+
+def _compile_opening_array(action: Dict[str, Any]) -> List[Dict[str, Any]]:
+    array_name = str(action["name"])
+    storey = action.get("storey") or action.get("storey_name")
+    wall_name = str(action["wall_name"])
+    count = int(action["count"])
+    spacing = float(action["spacing"])
+    start_offset = float(action["start_offset"])
+    opening_type = str(action.get("opening_type") or "window")
+    width = float(action["width"])
+    height = float(action["height"])
+    thickness = float(action["thickness"])
+    sill_height = float(action.get("sill_height") or 0.0) if opening_type == "window" else 0.0
+
+    base_semantics = dict(action.get("semantics") or {})
+    array_id = str(base_semantics.get("element_id") or _slug(array_name))
+
+    openings: List[Dict[str, Any]] = []
+    for index in range(count):
+        offset = start_offset + index * spacing
+        label = f"{index + 1:02d}"
+
+        if opening_type == "door":
+            element_name = f"{array_name}-Door-{label}"
+            ifc_type = "create_door"
+            subrole = "array_door"
+            group_label = "Doors"
+        else:
+            element_name = f"{array_name}-Win-{label}"
+            ifc_type = "create_window"
+            subrole = "array_window"
+            group_label = "Windows"
+
+        semantics = copy.deepcopy(base_semantics)
+        semantics["element_id"] = f"{array_id}__{subrole}_{label}"
+        semantics.setdefault("parent_id", array_id)
+        semantics.setdefault("assembly_id", array_id)
+        semantics.setdefault("subrole", subrole)
+        group_path = list(semantics.get("group_path") or [])
+        if group_label not in group_path:
+            semantics["group_path"] = group_path + [group_label]
+
+        opening_dict: Dict[str, Any] = {
+            "type": ifc_type,
+            "name": element_name,
+            "storey": storey,
+            "wall_name": wall_name,
+            "offset_along_wall": offset,
+            "width": width,
+            "height": height,
+            "thickness": thickness,
+            "semantics": semantics,
+        }
+        if opening_type == "window":
+            opening_dict["sill_height"] = sill_height
+
+        opening = _inherit_metadata(action, opening_dict)
+        openings.append(_ensure_semantic_identity(opening))
+
+    return openings
 
 
 def _apply_edit_action(state: List[Dict[str, Any]], action: Dict[str, Any], *, index: int) -> None:

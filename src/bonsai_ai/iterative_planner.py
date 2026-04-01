@@ -115,9 +115,11 @@ _TYPE_ALIASES = {
     "create_rectangular_slab": "create_rect_slab",
     "create_slab": "create_rect_slab",
     "create_column_grid": "generate_column_grid",
+    "create_beam_grid": "generate_beam_grid",
     "create_perimeter_walls": "generate_perimeter_walls",
     "create_floor_plate": "generate_floor_plate",
     "create_facade_grid": "generate_facade_grid",
+    "create_opening_array": "generate_opening_array",
     "ensure_project": "ensure_storey",
 }
 
@@ -148,6 +150,7 @@ _NUMERIC_FIELDS = frozenset({
     "rotation_deg", "rotation_degrees", "direction_deg",
     "bays_x", "bays_y",
     "panel_width", "panel_height", "panel_gap", "panel_thickness",
+    "count", "spacing", "start_offset",
 })
 
 
@@ -190,9 +193,10 @@ def _normalize_actions(actions: List[Dict[str, Any]]) -> None:
             if field_name in action:
                 action[field_name] = _coerce_numeric(action[field_name])
 
-        if action.get("type") in ("create_rect_slab", "create_rectangular_slab"):
-            if (not action.get("depth")) and action.get("length"):
-                action["depth"] = action.pop("length")
+        # NOTE: Slab dimension coercion (length/width -> width/depth) is
+        # handled by _coerce_numeric_fields in the schema layer.  Do NOT
+        # remap slab dimensions here -- the previous code mapped
+        # length -> depth which rotated slabs 90 degrees.
 
 
 # ---------------------------------------------------------------------------
@@ -397,8 +401,8 @@ class IterativeBuilder:
             "Generate BIM actions as JSON. Respond with:\n"
             '{"version":"1", "units":"meters", "summary":"...", '
             '"assumptions":[], "actions":[...]}\n\n'
-            "Use generate_column_grid, generate_floor_plate, "
-            "generate_perimeter_walls for repetitive patterns. "
+            "Use generate_column_grid, generate_beam_grid, generate_floor_plate, "
+            "generate_perimeter_walls, generate_opening_array for repetitive patterns. "
             "Build storeys first, then structure, then envelope, "
             "then openings.\n\n"
             "Respond with ONLY JSON."

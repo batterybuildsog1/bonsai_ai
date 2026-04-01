@@ -20,3 +20,4 @@ viewer/public/ifc-lite_bg.wasm
 .venv*/
 mojo_modules/*.so
 mojo_modules/__pycache__/
+.vite/

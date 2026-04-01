@@ -27,9 +27,11 @@ Return JSON matching the provided schema. Use metric units (meters).
 ## Generators (prefer these for regular patterns)
 
 - `generate_column_grid`: regular column grids. Expands to (bays_x+1)*(bays_y+1) columns.
+- `generate_beam_grid`: beams at every gridline. Use the same grid parameters as generate_column_grid. Expands to bays_x*(bays_y+1) EW beams + bays_y*(bays_x+1) NS beams.
 - `generate_perimeter_walls`: walls around a polygon. Expands to one wall per edge.
 - `generate_floor_plate`: slab with optional perimeter beams. Set include_edge_beams=true for framed floors.
 - `generate_facade_grid`: curtain wall facade with panel dimensions.
+- `generate_opening_array`: evenly spaced windows or doors along a wall. Use instead of individual create_window/create_door for repetitive facades.
 - Fall back to individual create_* actions for irregular or custom geometry.
 
 ## Primitives

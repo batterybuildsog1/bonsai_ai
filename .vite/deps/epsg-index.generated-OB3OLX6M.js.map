@@ -1,7 +1,0 @@
-{
-  "version": 3,
-  "sources": ["../../viewer/node_modules/@ifc-lite/data/src/generated/epsg-index.generated.ts"],
-  "sourcesContent": [null],
-  "mappings": ";AAgBO,IAAM,6BAA6B;AAE1C,IAAM,kBAAkB;AAEjB,IAAM,aAAwC,KAAK,MAAM,eAAe;",
-  "names": []
-}
