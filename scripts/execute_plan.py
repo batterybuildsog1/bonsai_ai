@@ -115,7 +115,7 @@ def main() -> int:
     try:
         from bonsai_ai.ifc_author import AuthoringError, IfcAuthor
         from bonsai_ai.execution import HeadlessIfcExecutor
-        from bonsai_ai.phased_planner import _normalize_actions
+        from bonsai_ai.iterative_planner import _normalize_actions
     except ImportError as exc:
         return _error(f"Failed to import bonsai_ai: {exc}")
 

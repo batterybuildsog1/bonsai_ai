@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from typing import Dict, List, Sequence, Tuple
 
 from .ifc_author import AuthoringError, IfcAuthor
 from .planner import DEFAULT_MODELS, DEFAULT_ENV_VARS, PlannerError, PlannedToolCall, create_plan
-from .openclaw_planner import create_plan_via_openclaw
-from .phased_planner import create_phased_plan_via_openclaw
 from .iterative_planner import create_iterative_plan_via_openclaw
 
 
@@ -88,19 +87,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--prompt", required=True, help="Natural-language building request.")
     parser.add_argument("--dry-run", action="store_true", help="Print the planned tool calls without writing IFC.")
     parser.add_argument(
-        "--via-openclaw",
-        action="store_true",
-        help="Route model calls through OpenClaw agent (uses subscription auth instead of API keys).",
-    )
-    parser.add_argument(
-        "--single-phase",
-        action="store_true",
-        help="Use single-shot planner instead of phased plan-then-execute (only with --via-openclaw).",
-    )
-    parser.add_argument(
         "--iterative",
         action="store_true",
-        help="Use iterative session-based planner (maintains conversation context across phases).",
+        help="Use iterative session-based planner via OpenClaw (no API key needed).",
+    )
+    parser.add_argument(
+        "--full-pipeline",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Run the full design pipeline (export + analysis + bundle) after plan+IFC. Default: true.",
     )
     return parser
 
@@ -108,15 +103,10 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
-    use_openclaw = getattr(args, "via_openclaw", False)
-    use_single_phase = getattr(args, "single_phase", False)
-    use_iterative = getattr(args, "iterative", False)
-
     # -----------------------------------------------------------------------
-    # Iterative planner path — maintains session context across phases.
-    # Activated with --iterative (implies --via-openclaw).
+    # Iterative planner path -- session-based via OpenClaw subscription.
     # -----------------------------------------------------------------------
-    if use_iterative:
+    if args.iterative:
         try:
             summary = create_iterative_plan_via_openclaw(
                 user_prompt=args.prompt,
@@ -125,42 +115,20 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         except PlannerError as exc:
             print(f"[iterative] Iterative planner failed: {exc}")
-            if use_openclaw or getattr(args, "provider", None):
-                print("[iterative] Falling back to phased planner...")
-            else:
-                raise
+            raise
         else:
             if args.dry_run:
                 print(json.dumps(summary, indent=2))
-            return 0
+                return 0
+
+        # Run the full design pipeline after IFC generation
+        if args.full_pipeline:
+            _run_full_pipeline(args.output)
+
+        return 0
 
     # -----------------------------------------------------------------------
-    # Phased planner path — default when --via-openclaw is set.
-    # The phased planner handles its own plan-then-execute loop internally
-    # because it refreshes the scene summary between phases.
-    # -----------------------------------------------------------------------
-    if use_openclaw and not use_single_phase:
-        try:
-            summary = create_phased_plan_via_openclaw(
-                user_prompt=args.prompt,
-                output_path=args.output,
-                dry_run=args.dry_run,
-            )
-        except PlannerError as exc:
-            # If a direct-API provider is also configured, fall back to it
-            if getattr(args, "provider", None):
-                print(f"[phased] Phased planner failed: {exc}")
-                print("[phased] Falling back to single-phase direct API...")
-                # Fall through to the legacy loop below
-            else:
-                raise
-        else:
-            if args.dry_run:
-                print(json.dumps(summary, indent=2))
-            return 0
-
-    # -----------------------------------------------------------------------
-    # Legacy single-phase loop (direct API or --single-phase --via-openclaw)
+    # Direct API planner path (plan + IFC loop with smart replanning)
     # -----------------------------------------------------------------------
     author = IfcAuthor(args.output)
     all_calls: List[PlannedToolCall] = []
@@ -169,37 +137,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     seen_rounds: set = set()
     failed_calls: set = set()
     max_rounds = 12
-
-    # Helper: call the right planner backend based on --via-openclaw flag.
-    def _do_plan(user_prompt: str, scene_summary: str, progress_summary: str):
-        if use_openclaw:
-            try:
-                return create_plan_via_openclaw(
-                    user_prompt=user_prompt,
-                    scene_summary=scene_summary,
-                    progress_summary=progress_summary,
-                )
-            except PlannerError:
-                # If --provider is also set, fall back to direct API
-                if getattr(args, "provider", None):
-                    print("[openclaw] OpenClaw failed, falling back to direct API...")
-                    return create_plan(
-                        provider=args.provider,
-                        model=args.model,
-                        api_key_env=args.api_key_env or DEFAULT_ENV_VARS[args.provider],
-                        user_prompt=user_prompt,
-                        scene_summary=scene_summary,
-                        progress_summary=progress_summary,
-                    )
-                raise
-        return create_plan(
-            provider=args.provider,
-            model=args.model,
-            api_key_env=args.api_key_env or DEFAULT_ENV_VARS[args.provider],
-            user_prompt=user_prompt,
-            scene_summary=scene_summary,
-            progress_summary=progress_summary,
-        )
 
     # Track per-element repair attempts.  Key = (tool_name, element_name_or_sig).
     # If an element fails targeted repair twice, we escalate to full replan.
@@ -225,7 +162,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
             progress_lines.append(f"REPAIR: attempting targeted repair (round {round_num + 1})")
 
-            plan = _do_plan(
+            plan = create_plan(
+                provider=args.provider,
+                model=args.model,
+                api_key_env=args.api_key_env or DEFAULT_ENV_VARS[args.provider],
                 user_prompt=repair_prompt,
                 scene_summary=author.scene_summary(),
                 progress_summary="\n".join(progress_lines),
@@ -233,12 +173,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         else:
             # FULL (re)plan -- the normal path
             if round_num > 0 and any_failure_seen:
-                # Log that we are doing a full replan (only after failures --
-                # in the zero-failure case the progress_lines stay identical
-                # to the original behaviour).
                 progress_lines.append(f"REPLAN: full round {round_num + 1}")
 
-            plan = _do_plan(
+            plan = create_plan(
+                provider=args.provider,
+                model=args.model,
+                api_key_env=args.api_key_env or DEFAULT_ENV_VARS[args.provider],
                 user_prompt=args.prompt,
                 scene_summary=author.scene_summary(),
                 progress_summary="\n".join(progress_lines),
@@ -301,22 +241,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         # ------------------------------------------------------------------
         if failed_this_round:
             any_failure_seen = True
-            # Decide: targeted repair or full replan?
-            #
-            # Escalate to full replan when:
-            #   1. Any failure is structural (hierarchy problem)
-            #   2. ALL calls in the round failed (nothing to anchor the repair)
-            #   3. Any element has already been repaired twice (stuck in a loop)
             should_full_replan = has_structural_failure or not succeeded
 
             if not should_full_replan:
-                # Check per-element repair attempt limits
                 for call, _error in failed_this_round:
                     element_key = call.arguments.get("name", json.dumps(call.arguments, sort_keys=True))
                     repair_key = f"{call.name}:{element_key}"
                     count = repair_attempt_counts.get(repair_key, 0)
                     if count >= 2:
-                        # This element has failed repair twice -- escalate
                         should_full_replan = True
                         progress_lines.append(
                             f"REPAIR ESCALATION: {repair_key} failed repair {count} time(s), "
@@ -326,8 +258,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                     repair_attempt_counts[repair_key] = count + 1
 
             if should_full_replan:
-                # Fall through to next iteration which will do a full replan
-                # (pending_repair_prompt is already None)
                 if has_structural_failure:
                     progress_lines.append(
                         "REPLAN REASON: structural/hierarchy failure detected, "
@@ -339,7 +269,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                         "skipping targeted repair"
                     )
             else:
-                # Set up a targeted repair for the next iteration
                 pending_repair_prompt = _build_repair_prompt(
                     succeeded=succeeded,
                     failed=failed_this_round,
@@ -362,7 +291,88 @@ def main(argv: Sequence[str] | None = None) -> int:
     for result in all_results:
         print(f"{result.tool_name}: {result.message}")
     print(author.debug_dump())
+
+    # Run the full design pipeline after IFC generation
+    if args.full_pipeline:
+        _run_full_pipeline(args.output)
+
     return 0
+
+
+def _run_full_pipeline(ifc_path: str) -> None:
+    """Run the design pipeline stages (export + analysis + bundle) on an existing IFC file."""
+    output_dir = os.path.dirname(os.path.abspath(ifc_path))
+
+    try:
+        from .analysis_exports import JsonAnalysisExportBackend
+        from .contracts import AnalysisDomain, AnalysisRequest, DesignBrief, DesignPackage, LoadCase, SourceDocument
+        from .execution import IfcPhysicalModelBackend
+        from .pipeline import DesignPipeline
+        from .pynite_backend import PyNiteSolverBackend
+        from .results_bundle import JsonResultsBundleBackend
+    except ImportError as exc:
+        print(f"[pipeline] Skipping full pipeline -- missing dependency: {exc}")
+        return
+
+    from .design_pipeline_cli import DEFAULT_ENGINEERING_SCOPES
+
+    print(f"\n[pipeline] Running full design pipeline on {ifc_path}...")
+
+    analysis_domains = [AnalysisDomain.GRAVITY]
+    brief = DesignBrief(prompt="(from IFC)", documents=[])
+    analysis_request = AnalysisRequest(
+        solver="pynite",
+        design_codes=[],
+        load_cases=[
+            LoadCase(
+                name=f"{domain.value}_default",
+                domain=domain,
+                code_basis="unspecified",
+            )
+            for domain in analysis_domains
+        ],
+        export_options={
+            "freecad_handoff": True,
+            "engineering_scopes": list(DEFAULT_ENGINEERING_SCOPES),
+        },
+    )
+
+    pipeline = DesignPipeline(
+        planner=None,  # type: ignore[arg-type]  -- IFC already exists, skip planning
+        physical_backend=None,  # IFC already materialized
+        analysis_exporter=JsonAnalysisExportBackend(include_freecad_handoff=True),
+        solver=PyNiteSolverBackend(),
+        results_backend=JsonResultsBundleBackend(),
+    )
+
+    # Build a package from the existing IFC
+    package = DesignPackage(brief=brief)
+    package.analysis_request = analysis_request
+
+    try:
+        from pathlib import Path
+
+        target_dir = Path(output_dir)
+
+        if pipeline.analysis_exporter and package.analysis_request:
+            package.analysis_artifacts = list(pipeline.analysis_exporter.export(package, target_dir))
+
+        if pipeline.solver and package.analysis_request:
+            package.analysis_result = pipeline.solver.analyze(package.analysis_request, package, target_dir)
+            if package.analysis_result.artifacts:
+                package.analysis_artifacts.extend(package.analysis_result.artifacts)
+
+        if pipeline.results_backend:
+            package.results_artifacts = list(pipeline.results_backend.build(package, target_dir))
+
+        DesignPipeline.write_manifest(package, target_dir / "design_package.json")
+
+        print(f"[pipeline] Design package written to {output_dir}")
+        if package.analysis_artifacts:
+            for artifact in package.analysis_artifacts:
+                print(f"[pipeline]   {artifact.kind.value}: {artifact.path}")
+    except Exception as exc:
+        print(f"[pipeline] Pipeline failed (IFC still saved): {exc}")
 
 
 if __name__ == "__main__":
